@@ -106,7 +106,8 @@ async function handleSend() {
     const typingIndicator = appendMsg("正在輸入...", 'bot');
     typingIndicator.classList.add('typing-indicator');
 
-    const targetUrl = window.API_URL || 'http://localhost:5000/chat';
+    const targetUrl = window.API_URL || 'https://railway.app';
+
 
     try {
         const response = await fetch(targetUrl, {
