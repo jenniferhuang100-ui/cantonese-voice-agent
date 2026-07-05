@@ -14,7 +14,7 @@ const inputTray = document.querySelector('.widget-input-tray');
 const micBtn = document.createElement('button');
 micBtn.id = 'micBtn';
 micBtn.innerHTML = '🎙️';
-micBtn.style.cssText = "background: #f0f4f2; border: none; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: background 0.2s;";
+micBtn.style.cssText = "background: #f0f4f2; border: none; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: background 0.2s; margin-right: 4px;";
 inputTray.insertBefore(micBtn, widgetSendBtn);
 
 // 2. Browser Speech-To-Text Setup (Cantonese zh-HK)
@@ -48,10 +48,11 @@ if (SpeechRecognition) {
     };
 
     recognition.onresult = (event) => {
-        const speechToTextResult = event.results[0][0].transcript;
-        widgetInput.value = speechToTextResult;
-        handleSend(); // Automatically hit send when you finish speaking!
-    };
+    // Correctly parse the deep text array result from the browser speech engine
+    const speechToTextResult = event.results[0][0].transcript; 
+    widgetInput.value = speechToTextResult;
+    handleSend();
+};
 
     micBtn.addEventListener('click', () => {
         if (isRecording) {
@@ -68,12 +69,11 @@ if (SpeechRecognition) {
 // 3. Browser Text-To-Speech Setup (Speak back in Cantonese)
 function speakOutLoud(textToSay) {
     if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel(); 
     
-    window.speechSynthesis.cancel(); // Mute any ongoing speech instantly
-    
-    const cleanText = textToSay.replace(/[*#_\[\]\-]/g, ''); // Strip markdown symbols
+    const cleanText = textToSay.replace(/[*#_\[\]\-]/g, ''); 
     const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = 'zh-HK'; // Native HK localized voice output accent [index='1.3.4']
+    utterance.lang = 'zh-HK'; 
     
     const voices = window.speechSynthesis.getVoices();
     const hkVoice = voices.find(v => v.lang === 'zh-HK' || v.lang.includes('zh-GND'));
@@ -121,7 +121,7 @@ async function handleSend() {
         const data = await response.json();
         
         appendMsg(data.reply, 'bot');
-        speakOutLoud(data.reply); // Read the response out loud in Cantonese!
+        speakOutLoud(data.reply); 
     } catch (err) {
         typingIndicator.remove();
         appendMsg("對唔住呀，我同伺服器連唔到線，請檢查 Flask 係咪開緊。", 'bot');
@@ -132,7 +132,6 @@ async function handleSend() {
 widgetSendBtn.addEventListener('click', handleSend);
 widgetInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleSend(); });
 
-// Ensure available voice profiles resolve accurately in Chrome
 if (window.speechSynthesis && window.speechSynthesis.onvoiceschanged !== undefined) {
     window.speechSynthesis.onvoiceschanged = () => {};
 }
