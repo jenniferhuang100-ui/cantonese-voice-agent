@@ -1,0 +1,112 @@
+[
+  {
+    "id": "wilson-blade-98-v9",
+    "brand": "Wilson",
+    "model": "Blade 98 16x19 V9",
+    "price_hkd": 1980,
+    "weight_g": 305,
+    "head_size_sqin": 98,
+    "balance": "head-light",
+    "best_for": ["advanced", "control", "baseliner"],
+    "in_stock": true
+  },
+  {
+    "id": "babolat-pure-drive-2021",
+    "brand": "Babolat",
+    "model": "Pure Drive",
+    "price_hkd": 1750,
+    "weight_g": 300,
+    "head_size_sqin": 100,
+    "balance": "even",
+    "best_for": ["intermediate", "power", "baseliner"],
+    "in_stock": true
+  },
+  {
+    "id": "head-speed-mp-2024",
+    "brand": "Head",
+    "model": "Speed MP 2024",
+    "price_hkd": 1850,
+    "weight_g": 300,
+    "head_size_sqin": 100,
+    "balance": "head-light",
+    "best_for": ["intermediate", "advanced", "all-court", "doubles"],
+    "in_stock": true
+  },
+  {
+    "id": "yonex-ezone-100",
+    "brand": "Yonex",
+    "model": "EZONE 100",
+    "price_hkd": 1680,
+    "weight_g": 300,
+    "head_size_sqin": 100,
+    "balance": "head-light",
+    "best_for": ["intermediate", "power", "baseliner"],
+    "in_stock": true
+  },
+  {
+    "id": "wilson-pro-staff-97-v14",
+    "brand": "Wilson",
+    "model": "Pro Staff 97 V14",
+    "price_hkd": 2180,
+    "weight_g": 315,
+    "head_size_sqin": 97,
+    "balance": "head-light",
+    "best_for": ["advanced", "control", "net-rush"],
+    "in_stock": true
+  },
+  {
+    "id": "babolat-pure-aero-2023",
+    "brand": "Babolat",
+    "model": "Pure Aero",
+    "price_hkd": 1820,
+    "weight_g": 300,
+    "head_size_sqin": 100,
+    "balance": "head-light",
+    "best_for": ["intermediate", "advanced", "spin", "baseliner"],
+    "in_stock": true
+  },
+  {
+    "id": "head-boom-team-l",
+    "brand": "Head",
+    "model": "Boom Team L 2024",
+    "price_hkd": 1380,
+    "weight_g": 260,
+    "head_size_sqin": 107,
+    "balance": "head-heavy",
+    "best_for": ["beginner", "power", "all-court"],
+    "in_stock": true
+  },
+  {
+    "id": "yonex-vcore-98",
+    "brand": "Yonex",
+    "model": "VCORE 98",
+    "price_hkd": 1720,
+    "weight_g": 305,
+    "head_size_sqin": 98,
+    "balance": "head-light",
+    "best_for": ["advanced", "spin", "baseliner"],
+    "in_stock": true
+  },
+  {
+    "id": "wilson-ultra-100-v4",
+    "brand": "Wilson",
+    "model": "Ultra 100 V4",
+    "price_hkd": 1650,
+    "weight_g": 300,
+    "head_size_sqin": 100,
+    "balance": "head-light",
+    "best_for": ["intermediate", "power", "doubles"],
+    "in_stock": true
+  },
+  {
+    "id": "decathlon-artengo-tr160",
+    "brand": "Artengo",
+    "model": "TR160 Graph",
+    "price_hkd": 349,
+    "weight_g": 270,
+    "head_size_sqin": 102,
+    "balance": "even",
+    "best_for": ["beginner", "budget", "all-court"],
+    "in_stock": true
+  }
+]
