@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import csv
@@ -22,10 +23,22 @@ app = Flask(__name__)
 CORS(app)  # Crucial: This permits your index.html file to call the backend!
 
 MODEL = "claude-3-5-haiku-20241022"  # Current Anthropic SDK standard
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=20.0)
+
+# Demo mode switch: MOCK=1 forces the scripted offline agent below even if a
+# real key is present (for rehearsing without burning API credits); with no
+# override, an empty/missing key falls back to the same scripted path
+# automatically so the demo still runs with no Anthropic account at all.
+MOCK_MODE = os.getenv("MOCK", "0") == "1" or not os.getenv("ANTHROPIC_API_KEY")
+
+MAX_TOOL_ITERATIONS = 5
 
 # Memory bank dictionary to keep conversation history isolated per session_id
 sessions_history = {}
+
+# Separate, isolated state store for the scripted MOCK_MODE conversation —
+# never shared with sessions_history so the two code paths can't interfere.
+mock_sessions = {}
 
 # --- CORE INTEGRATED TOOLS ---
 
@@ -33,35 +46,46 @@ def search_racquets(budget_max_hkd=None, level=None, play_style=None):
     catalog_path = os.path.join(os.path.dirname(__file__), "data", "racquets.json")
     if not os.path.exists(catalog_path):
         return {"error": "Catalog data file missing."}
-    
+
     with open(catalog_path, "r", encoding="utf-8") as f:
         racquets = json.load(f)
-    
-    results = []
+
     # Map mapping user Cantonese filters to data keys
     level_map = {"初": "beginner", "中": "intermediate", "高": "advanced"}
     style_map = {"底線": "baseliner", "上網": "net-rush", "雙打": "doubles"}
-    
-    for r in racquets:
-        if not r.get("in_stock", True):
-            continue
-        if budget_max_hkd and r.get("price_hkd", 0) > budget_max_hkd:
-            continue
-            
-        # Match level if provided
-        if level:
-            mapped_lvl = level_map.get(level[0], level)
-            if not any(mapped_lvl in b for b in r.get("best_for", [])):
+
+    def _filter(use_budget, use_level, use_style):
+        out = []
+        for r in racquets:
+            if not r.get("in_stock", True):
                 continue
-                
-        # Match play style if provided
-        if play_style:
-            mapped_style = style_map.get(play_style, play_style)
-            if not any(mapped_style in b for b in r.get("best_for", [])):
+            if use_budget and r.get("price_hkd", 0) > use_budget:
                 continue
-                
-        results.append(r)
-    return results
+            if use_level:
+                mapped_lvl = level_map.get(use_level[0], use_level)
+                if not any(mapped_lvl in b for b in r.get("best_for", [])):
+                    continue
+            if use_style:
+                mapped_style = style_map.get(use_style, use_style)
+                if not any(mapped_style in b for b in r.get("best_for", [])):
+                    continue
+            out.append(r)
+        return out
+
+    # Exact filters first; if that's empty, relax play_style, then level, then
+    # budget, in that order, so the catalog never hands the model a dead end
+    # (e.g. today every "beginner" pick has zero results for any play style,
+    # since neither beginner racquet is tagged baseliner/net-rush/doubles).
+    for b, l, s in [
+        (budget_max_hkd, level, play_style),
+        (budget_max_hkd, level, None),
+        (budget_max_hkd, None, None),
+        (None, None, None),
+    ]:
+        results = _filter(b, l, s)
+        if results:
+            return results
+    return []
 
 def book_fitting(name, phone, datetime_str):
     data_dir = os.path.join(os.path.dirname(__file__), "data")
@@ -75,6 +99,141 @@ def book_fitting(name, phone, datetime_str):
             writer.writerow(["Name", "Phone", "DateTime"])  # Header row
         writer.writerow([name, phone, datetime_str])
     return {"status": "success", "message": f"Successfully booked for {name}."}
+
+# Backend-enforced confirmation check: independent of what the model claims,
+# this inspects the customer's own latest message before any booking is written.
+NEGATION_MARKERS_ZH = ["唔係", "唔好", "唔要", "取消", "唔啱"]
+NEGATION_MARKERS_EN = ["no", "not", "cancel", "don't", "dont"]
+STRONG_CONFIRM_ZH = ["冇問題", "係啊", "係呀", "係嘅", "岩喎", "可以嘅", "好呀", "好嘅", "好"]
+STRONG_CONFIRM_EN = ["confirm", "okay", "yes", "sure"]
+SHORT_CONFIRM = ["係", "ok", "得", "可以", "岩"]
+
+def is_explicit_confirmation(text):
+    if not text:
+        return False
+    t = text.strip()
+    tl = t.lower()
+
+    if any(m in t for m in NEGATION_MARKERS_ZH) or any(m in tl for m in NEGATION_MARKERS_EN):
+        return False
+
+    if any(m in t for m in STRONG_CONFIRM_ZH) or any(m in tl for m in STRONG_CONFIRM_EN):
+        return True
+
+    # Bare short replies ("係" / "ok" / "得") only count as confirmation when the
+    # whole message is short, so we don't false-match those common words/particles
+    # inside an unrelated, longer sentence.
+    if len(t) <= 6 and any(m in t or m in tl for m in SHORT_CONFIRM):
+        return True
+
+    return False
+
+def handle_book_fitting(tool_args, user_msg):
+    name = (tool_args.get("name") or "").strip()
+    phone = (tool_args.get("phone") or "").strip()
+    datetime_str = (tool_args.get("datetime_str") or "").strip()
+
+    missing = [f for f, v in [("name", name), ("phone", phone), ("datetime_str", datetime_str)] if not v]
+    if missing:
+        return {
+            "status": "error",
+            "message": f"Missing required booking field(s): {', '.join(missing)}. Ask the customer for the missing info before calling book_fitting again."
+        }
+
+    if not is_explicit_confirmation(user_msg):
+        return {
+            "status": "error",
+            "message": "Booking blocked: the customer's latest message is not an explicit confirmation (e.g. 係 / 冇問題 / OK). Read back the name, phone, and time, and wait for a clear yes before calling book_fitting again."
+        }
+
+    return book_fitting(name, phone, datetime_str)
+
+# --- MOCK / OFFLINE DEMO MODE ---
+# A small scripted state machine that walks the exact fixed question order
+# from system_prompt.md (budget -> level -> style -> recommend -> book?
+# -> name -> phone -> datetime -> confirm -> book_fitting). Used only when
+# MOCK_MODE is on, so a demo can run with zero Anthropic API calls.
+
+REFUSAL_TRIGGERS = ["傷", "痛", "醫", "穿線", "拉線", "場地", "租場"]
+REFUSAL_REPLY = "呢個我唔係好識，不如我幫你搵支啱嘅拍先。"
+
+MOCK_PROMPTS = {
+    "budget": "請問你個預算係幾多？（例如 1500）",
+    "level": "你係初級、中級定高級球手？",
+    "style": "你鍾意打底線、上網定雙打？",
+}
+
+def _mock_get_state(session_id):
+    if session_id not in mock_sessions:
+        mock_sessions[session_id] = {
+            "step": "budget", "budget": None, "level": None, "style": None,
+            "name": None, "phone": None, "datetime": None,
+        }
+    return mock_sessions[session_id]
+
+def mock_reply(session_id, user_msg):
+    state = _mock_get_state(session_id)
+    step = state["step"]
+
+    if step in MOCK_PROMPTS and any(k in user_msg for k in REFUSAL_TRIGGERS):
+        return REFUSAL_REPLY + MOCK_PROMPTS[step]
+
+    if step == "budget":
+        m = re.search(r"\d+", user_msg)
+        if not m:
+            return "唔好意思，可唔可以講清楚少少你嘅預算？（例如 1500）"
+        state["budget"] = int(m.group())
+        state["step"] = "level"
+        return f"明白，預算大約 HKD {state['budget']}。{MOCK_PROMPTS['level']}"
+
+    if step == "level":
+        level = next((full for ch, full in [("初", "初級"), ("中", "中級"), ("高", "高級")] if ch in user_msg), None)
+        if not level:
+            return f"唔該講多次，{MOCK_PROMPTS['level']}"
+        state["level"] = level
+        state["step"] = "style"
+        return MOCK_PROMPTS["style"]
+
+    if step == "style":
+        style = next((s for s in ["底線", "上網", "雙打"] if s in user_msg), None)
+        if not style:
+            return f"唔該講多次，{MOCK_PROMPTS['style']}"
+        state["style"] = style
+        state["step"] = "ask_book"
+        results = search_racquets(budget_max_hkd=state["budget"], level=state["level"], play_style=state["style"])
+        lines = [f"- {r['brand']} {r['model']}（HKD {r['price_hkd']}）" for r in results[:3]]
+        return "同你搵到幾支拍：\n" + "\n".join(lines) + "\n想唔想我幫你約 fitting？"
+
+    if step == "ask_book":
+        if not is_explicit_confirmation(user_msg):
+            return "好，有需要幫手隨時搵返我。"
+        state["step"] = "name"
+        return "好呀！請問你個名係？"
+
+    if step == "name":
+        state["name"] = user_msg.strip()
+        state["step"] = "phone"
+        return "唔該畀個電話號碼？"
+
+    if step == "phone":
+        state["phone"] = user_msg.strip()
+        state["step"] = "datetime"
+        return "想約幾時嚟 fitting 呢？"
+
+    if step == "datetime":
+        state["datetime"] = user_msg.strip()
+        state["step"] = "confirm"
+        return f"你想book {state['datetime']}，名係 {state['name']}，電話係 {state['phone']}，係咪？"
+
+    if step == "confirm":
+        if not is_explicit_confirmation(user_msg):
+            state["step"] = "name"
+            return "冇問題，我哋再嚟一次。請問你個名係？"
+        book_fitting(state["name"], state["phone"], state["datetime"])
+        state["step"] = "done"
+        return f"搞掂！已經幫你book咗 {state['datetime']}，到時見！🎾"
+
+    return "多謝晒！仲有咩幫到你？"
 
 # Define schemas for Anthropic tool definitions
 TOOLS_SCHEMA = [
@@ -119,7 +278,10 @@ def chat():
     
     if not user_msg:
         return jsonify({"reply": "我聽唔清，可以再講一次嗎？"})
-        
+
+    if MOCK_MODE:
+        return jsonify({"reply": mock_reply(session_id, user_msg)})
+
     # Read core Cantonese prompt instructions layout
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "system_prompt.md")
     system_prompt = "You are a helpful assistant."
@@ -145,7 +307,16 @@ def chat():
         )
         
         # Process structural Agent ReAct routing block triggers
+        tool_iterations = 0
         while response.stop_reason == "tool_use":
+            tool_iterations += 1
+            if tool_iterations > MAX_TOOL_ITERATIONS:
+                # Bail out before appending an unmatched tool_use block, so
+                # history stays balanced for the next turn's API call.
+                fallback = "唔好意思，呢個問題有啲複雜，可唔可以講清楚少少，或者我搵同事幫你？"
+                history.append({"role": "assistant", "content": fallback})
+                return jsonify({"reply": fallback})
+
             # Append assistant message stating intention to run tools
             history.append({"role": "assistant", "content": response.content})
             
@@ -160,7 +331,7 @@ def chat():
                     if tool_name == "search_racquets":
                         result_data = search_racquets(**tool_args)
                     elif tool_name == "book_fitting":
-                        result_data = book_fitting(**tool_args)
+                        result_data = handle_book_fitting(tool_args, user_msg)
                     else:
                         result_data = {"error": "Tool requested not found"}
                         
@@ -199,5 +370,5 @@ def chat():
 
 if __name__ == "__main__":
     print("Starting Flask Web Server on http://localhost:5000 ...")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
 
