@@ -163,13 +163,26 @@ MOCK_PROMPTS = {
     "style": "你鍾意打底線、上網定雙打？",
 }
 
+MORE_OPTIONS_TRIGGERS = ["其他", "第二啲", "多啲", "睇多啲", "仲有", "仲有冇", "其他選擇", "other", "more"]
+
 def _mock_get_state(session_id):
     if session_id not in mock_sessions:
         mock_sessions[session_id] = {
             "step": "budget", "budget": None, "level": None, "style": None,
-            "name": None, "phone": None, "datetime": None,
+            "name": None, "phone": None, "datetime": None, "shown_ids": set(),
         }
     return mock_sessions[session_id]
+
+def _mock_more_racquets(state):
+    results = search_racquets(budget_max_hkd=state["budget"], level=state["level"], play_style=state["style"])
+    remaining = [r for r in results if r["id"] not in state["shown_ids"]]
+    if not remaining:
+        # Exact filters exhausted — relax to budget-only so there's still something new to offer.
+        results = search_racquets(budget_max_hkd=state["budget"])
+        remaining = [r for r in results if r["id"] not in state["shown_ids"]]
+    batch = remaining[:3]
+    state["shown_ids"].update(r["id"] for r in batch)
+    return batch
 
 def mock_reply(session_id, user_msg):
     state = _mock_get_state(session_id)
@@ -200,15 +213,21 @@ def mock_reply(session_id, user_msg):
             return f"唔該講多次，{MOCK_PROMPTS['style']}"
         state["style"] = style
         state["step"] = "ask_book"
-        results = search_racquets(budget_max_hkd=state["budget"], level=state["level"], play_style=state["style"])
-        lines = [f"- {r['brand']} {r['model']}（HKD {r['price_hkd']}）" for r in results[:3]]
+        batch = _mock_more_racquets(state)
+        lines = [f"- {r['brand']} {r['model']}（HKD {r['price_hkd']}）" for r in batch]
         return "同你搵到幾支拍：\n" + "\n".join(lines) + "\n想唔想我幫你約 fitting？"
 
     if step == "ask_book":
-        if not is_explicit_confirmation(user_msg):
-            return "好，有需要幫手隨時搵返我。"
-        state["step"] = "name"
-        return "好呀！請問你個名係？"
+        if is_explicit_confirmation(user_msg):
+            state["step"] = "name"
+            return "好呀！請問你個名係？"
+        if any(k in user_msg for k in MORE_OPTIONS_TRIGGERS):
+            batch = _mock_more_racquets(state)
+            if not batch:
+                return "呢啲已經係我哋而家最啱嘅款喇，想唔想我幫你約 fitting 試吓？"
+            lines = [f"- {r['brand']} {r['model']}（HKD {r['price_hkd']}）" for r in batch]
+            return "仲有呢幾支你可以睇吓：\n" + "\n".join(lines) + "\n想唔想我幫你約 fitting？"
+        return "好，有需要幫手隨時搵返我。"
 
     if step == "name":
         state["name"] = user_msg.strip()

@@ -106,7 +106,7 @@ async function handleSend() {
     const typingIndicator = appendMsg("正在輸入...", 'bot');
     typingIndicator.classList.add('typing-indicator');
 
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const isLocal = ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
     const API_BASE = window.API_URL || (isLocal ? 'http://localhost:5000' : 'https://cantonese-voice-agent-production.up.railway.app');
     const targetUrl = `${API_BASE}/chat`;
 
