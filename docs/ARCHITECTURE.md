@@ -6,7 +6,7 @@ Technical companion to `PRD.md` (product scope) and `AGENT_DESIGN.md` (persona/c
 
 ```
 Browser (web/index.html)
-  ├─ static hardcoded catalog grid (display only)
+  ├─ catalog grid — fetched from GET /catalog (renders the same racquets.json the agent uses)
   └─ chat widget (web/voice-widget.js)
         ├─ Web Speech API: SpeechRecognition (mic → text, zh-HK)
         ├─ Web Speech API: SpeechSynthesis (text → voice, zh-HK)
@@ -49,10 +49,10 @@ There is no streaming — the client waits for the full loop (including any tool
 | `agent/tools/catalog.py`, `agent/tools/booking.py` | The two tool implementations. Imported directly by `bot.py` (`from tools.catalog import search_racquets`, `from tools.booking import book_fitting`) — single source of truth, no inline duplicates. |
 | `agent/data/racquets.json` | The only catalog the agent is allowed to recommend from, per the hard rule in `CLAUDE.md`. Backend-side source of truth. |
 | `agent/data/bookings.csv` | Append-only ledger written by `book_fitting()`. Created on first booking; not committed to git. |
-| `web/index.html` | Storefront shell plus a **second, hardcoded copy of the racquet catalog** (inline `<script>` array) used only to render the display grid — independent of `racquets.json` (see §7). |
-| `web/voice-widget.js` | Chat UI state, mic input via `SpeechRecognition`, voice output via `SpeechSynthesis`, and the `fetch` call to the backend. Also decides the API base URL (localhost vs. hardcoded Railway URL). |
+| `web/index.html` | Storefront shell. Decides the API base URL once (`window.API_BASE`, localhost vs. the deployed Railway URL) and renders the catalog grid by fetching the backend's `/catalog` endpoint — same `racquets.json` the agent recommends from, no second copy. |
+| `web/voice-widget.js` | Chat UI state, mic input via `SpeechRecognition`, voice output via `SpeechSynthesis`, and the `fetch` call to the backend (reuses `window.API_BASE` from `index.html`). |
 | `web/style.css` | Presentation only. |
-| `railway.json`, `Procfile.txt` | Deployment start-command declarations for Railway (belt-and-suspenders — both say `python agent/bot.py`). |
+| `railway.json`, `Procfile.txt` | Deployment start-command declarations for Railway (belt-and-suspenders — both say `python agent/bot.py`). `bot.py` binds to the `PORT` env var the host injects, defaulting to 5000 locally. |
 | `docs/PRD.md` | v1 scope, explicitly excludes cross-session memory, payments, non-Cantonese languages. |
 | `docs/AGENT_DESIGN.md` | Persona and conversation-flow spec at the product level — parallels `system_prompt.md` but is not read by any code. |
 
@@ -110,7 +110,7 @@ This is a reasonable, deliberate tradeoff for a v1 demo (matches the PRD's expli
 ## 8. Orchestration and tooling choices
 
 - **No agent framework.** The tool-calling loop is hand-rolled directly against the raw Anthropic Messages API (`anthropic` SDK's `client.messages.create`), not LangChain/LlamaIndex/an Anthropic agent framework. Tradeoff: full visibility and control over exactly what gets appended to history and when (which is what makes the iteration cap and the confirmation guardrail possible to implement precisely) — at the cost of having to hand-implement things a framework would give for free: retries/backoff, streaming, structured tracing, automatic context trimming.
-- **Model pinned by string literal**: `MODEL = "claude-haiku-4-5-20251001"` in `bot.py:25`, matching `CLAUDE.md`'s stated `claude-haiku-4-5`. Still a hardcoded literal, not an env var — a deploy-time model change requires a code edit.
+- **Model pinned by string literal**: `MODEL = "claude-haiku-4-5-20251001"` in `bot.py`, matching `CLAUDE.md`'s stated `claude-haiku-4-5`. Still a hardcoded literal, not an env var — a deploy-time model change requires a code edit.
 - **Tool execution is synchronous and untraced.** Tool calls run inline in the request thread with no logging of which tool was called with what arguments beyond a bare `print()` on exceptions — debugging a bad recommendation in production means reproducing it, not reading a log.
 - **Iteration cap as a circuit breaker** (`MAX_TOOL_ITERATIONS = 5`): protects against runaway tool-call loops (e.g., a model repeatedly calling `search_racquets` with slightly different args) turning into unbounded latency/cost. Good defensive default; the fallback message it returns is generic rather than telling the user anything about *why* it stopped.
 - **Error handling is string-sniffing.** The single `except Exception` handler classifies billing errors by checking whether `"credit"` or `"balance"` appears (case-insensitively) in `str(e)` — fragile if the SDK's error message wording changes, and it collapses all other failure modes (network, auth, malformed tool args, rate limit) into one generic "try again later" reply.
@@ -119,14 +119,15 @@ This is a reasonable, deliberate tradeoff for a v1 demo (matches the PRD's expli
 
 These are concrete, verifiable issues in the current tree, not style opinions:
 
-1. **Two divergent racquet catalogs.** `agent/data/racquets.json` (used by the backend/agent) and the inline `RACQUET_CATALOG` array hardcoded in `web/index.html` (used only for the display grid) are separately maintained lists of the same 10 products, in different shapes (`best_for` is a tagged array in one, a single Traditional-Chinese string in the other). Nothing keeps them in sync — the storefront grid could show a racquet the agent will never actually recommend, or vice versa, whenever one file is edited without the other.
-2. **`CLAUDE.md` references `agent/eval/conversations/`** as the location of test conversations; this directory does not exist in the repository yet.
-3. **CORS is fully open** (`CORS(app)` with no origin restriction) and there is no rate limiting or auth on `/chat` — acceptable for a local/demo deployment, a gap before this fronts a real store with a public URL (someone could script requests directly against the Railway endpoint and run up API costs, or spam `bookings.csv`).
-4. **CSV writes are not concurrency-safe.** `book_fitting()` opens, appends, and closes the file per call with no locking; fine under Flask's single-threaded dev server, a latent race if this is ever run with multiple workers/threads.
+1. **`CLAUDE.md` references `agent/eval/conversations/`** as the location of test conversations; this directory does not exist in the repository yet.
+2. **CORS is fully open** (`CORS(app)` with no origin restriction) and there is no rate limiting or auth on `/chat` — acceptable for a local/demo deployment, a gap before this fronts a real store with a public URL (someone could script requests directly against the Railway endpoint and run up API costs, or spam `bookings.csv`).
+3. **CSV writes are not concurrency-safe.** `book_fitting()` opens, appends, and closes the file per call with no locking; fine under Flask's single-threaded dev server, a latent race if this is ever run with multiple workers/threads.
+
+(Resolved since the last review: the second hardcoded catalog copy in `web/index.html` is gone — the grid now fetches `/catalog`, which serves `racquets.json` directly, and the Cantonese display copy moved into `racquets.json` as `tagline_zh`.)
 
 ## 10. Where to improve, roughly in priority order
 
-1. **Single source of truth for the catalog.** Have `web/index.html` fetch/render from `racquets.json` (or from a `/catalog` endpoint the backend serves) instead of maintaining a second hardcoded array.
+1. ~~**Single source of truth for the catalog.**~~ ✅ Done — `web/index.html` now fetches the backend's `/catalog` endpoint, which serves `racquets.json` directly.
 2. **Give sessions a TTL and an eviction policy**, even a crude one (e.g., drop entries untouched for >N minutes on each request), so `sessions_history`/`mock_sessions` don't grow unbounded in a long-running process.
 3. **Persist `session_id` client-side** (`localStorage`) so a page refresh doesn't silently start a new customer — small change, meaningfully better continuity for the one thing this app's memory currently supports (single-session, single-process continuity).
 4. **If conversations are expected to run long**, add a real context strategy: summarize or drop early turns once history crosses a token/turn threshold, rather than sending the full transcript every time. See §6a for the concrete approach.

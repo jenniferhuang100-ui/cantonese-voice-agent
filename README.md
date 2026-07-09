@@ -23,7 +23,7 @@ agent/
   data/racquets.json        # Source of truth for what the agent can recommend
   data/bookings.csv         # Generated at runtime; not committed
 web/
-  index.html                # Storefront page + embedded chat widget markup + its own hardcoded catalog display
+  index.html                # Storefront page + chat widget markup; catalog grid fetched from the backend /catalog endpoint
   style.css                 # Storefront + widget styling
   voice-widget.js            # Chat widget logic + mic input + speech output
 docs/
@@ -41,13 +41,13 @@ cp .env.example .env        # then fill in ANTHROPIC_API_KEY
 python agent/bot.py         # starts Flask on http://localhost:5000
 ```
 
-**Frontend** — just open `web/index.html` in Chrome (Web Speech API support is best there). No server or build step needed for local use.
+**Frontend** — just open `web/index.html` in Chrome (Web Speech API support is best there). No build step needed — but the backend must be running, since both the catalog grid and the chat widget call it.
 
 **Demo without an API key** — leave `ANTHROPIC_API_KEY` empty, or set `MOCK=1`. The backend falls back to a scripted, LLM-free conversation flow that walks the same question order as the real prompt (see `MOCK_MODE` in `agent/bot.py`).
 
 ## Deployment
 
-Configured for Railway (`railway.json`, `Procfile.txt`) — set `ANTHROPIC_API_KEY` as an environment variable on the host. The frontend's API base URL is hardcoded in `web/voice-widget.js` for the deployed Railway URL when not running on `localhost`.
+Configured for Railway (`railway.json`, `Procfile.txt`) — set `ANTHROPIC_API_KEY` as an environment variable on the host. `bot.py` binds to the host-injected `PORT` env var (defaults to 5000 locally). The frontend's API base URL is computed once in `web/index.html` (`window.API_BASE`): localhost when served locally, the deployed Railway URL otherwise.
 
 ## Hard rules (see `CLAUDE.md` for the full list)
 

@@ -8,6 +8,7 @@
     "head_size_sqin": 98,
     "balance": "head-light",
     "best_for": ["advanced", "control", "baseliner"],
+    "tagline_zh": "進階控球 / 底線抽擊",
     "in_stock": true
   },
   {
@@ -19,6 +20,7 @@
     "head_size_sqin": 100,
     "balance": "even",
     "best_for": ["intermediate", "power", "baseliner"],
+    "tagline_zh": "中級爆發力 / 借力抽擊",
     "in_stock": true
   },
   {
@@ -30,6 +32,7 @@
     "head_size_sqin": 100,
     "balance": "head-light",
     "best_for": ["intermediate", "advanced", "all-court", "doubles"],
+    "tagline_zh": "雙打全能 / 網前截擊",
     "in_stock": true
   },
   {
@@ -41,6 +44,7 @@
     "head_size_sqin": 100,
     "balance": "head-light",
     "best_for": ["intermediate", "power", "baseliner"],
+    "tagline_zh": "大甜區 / 高容錯初中級",
     "in_stock": true
   },
   {
@@ -52,6 +56,7 @@
     "head_size_sqin": 97,
     "balance": "head-light",
     "best_for": ["advanced", "control", "net-rush"],
+    "tagline_zh": "高級進攻 / 極致手感",
     "in_stock": true
   },
   {
@@ -63,6 +68,7 @@
     "head_size_sqin": 100,
     "balance": "head-light",
     "best_for": ["intermediate", "advanced", "spin", "baseliner"],
+    "tagline_zh": "強力上旋 / 進階抽擊",
     "in_stock": true
   },
   {
@@ -74,6 +80,7 @@
     "head_size_sqin": 107,
     "balance": "head-heavy",
     "best_for": ["beginner", "power", "all-court"],
+    "tagline_zh": "初學者 / 輕量借力",
     "in_stock": true
   },
   {
@@ -85,6 +92,7 @@
     "head_size_sqin": 98,
     "balance": "head-light",
     "best_for": ["advanced", "spin", "baseliner"],
+    "tagline_zh": "進階上旋 / 重點抽擊",
     "in_stock": true
   },
   {
@@ -96,6 +104,7 @@
     "head_size_sqin": 100,
     "balance": "head-light",
     "best_for": ["intermediate", "power", "doubles"],
+    "tagline_zh": "中級雙打 / 輕鬆借力",
     "in_stock": true
   },
   {
@@ -107,6 +116,7 @@
     "head_size_sqin": 102,
     "balance": "even",
     "best_for": ["beginner", "budget", "all-court"],
+    "tagline_zh": "入門新手 / 經濟實惠",
     "in_stock": true
   }
 ]

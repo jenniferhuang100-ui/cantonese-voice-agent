@@ -14,7 +14,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
-from tools.catalog import search_racquets
+from tools.catalog import search_racquets, load_catalog
 from tools.booking import book_fitting
 
 # Force Windows console/server logs to print Cantonese (UTF-8) without crashing
@@ -246,6 +246,12 @@ TOOLS_SCHEMA = [
 def health():
     return jsonify({"status": "ok"})
 
+@app.route("/catalog", methods=["GET"])
+def catalog():
+    # Serves racquets.json to the storefront grid, so the page displays the
+    # exact same catalog the agent recommends from — no second hardcoded copy.
+    return jsonify(load_catalog())
+
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json or {}
@@ -345,6 +351,9 @@ def chat():
         return jsonify({"reply": "對唔住呀，我而家處理唔到，不如等多陣再試過？"})
 
 if __name__ == "__main__":
-    print("Starting Flask Web Server on http://localhost:5000 ...")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    # Railway/Render inject the port to bind via the PORT env var; 5000 is the
+    # local-dev default and matches the frontend's localhost fallback URL.
+    port = int(os.getenv("PORT", "5000"))
+    print(f"Starting Flask Web Server on http://localhost:{port} ...")
+    app.run(host="0.0.0.0", port=port, debug=False)
 

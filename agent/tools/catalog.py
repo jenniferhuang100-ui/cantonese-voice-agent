@@ -27,12 +27,18 @@ def _filter(racquets, budget_max_hkd, level, play_style):
     return out
 
 
+def load_catalog():
+    """Full catalog as-is from racquets.json — the single source of truth,
+    also served to the storefront grid via the backend's /catalog endpoint."""
+    with open(DATA_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def search_racquets(budget_max_hkd=None, level=None, play_style=None):
     if not os.path.exists(DATA_PATH):
         return {"error": "Catalog data file missing."}
 
-    with open(DATA_PATH, "r", encoding="utf-8") as f:
-        racquets = json.load(f)
+    racquets = load_catalog()
 
     # Exact filters first; if that's empty, relax play_style, then level, then
     # budget, in that order, so the catalog never hands the model a dead end

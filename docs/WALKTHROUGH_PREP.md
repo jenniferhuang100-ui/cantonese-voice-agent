@@ -45,7 +45,7 @@ Study guide for talking through this project's agent design. Grounded in the act
 
 ## 3. Model selection
 
-**Decision**: `claude-haiku-4-5-20251001`, pinned as a string literal at `agent/bot.py:25`, matching `CLAUDE.md`. Right call for this task shape — short bounded conversation, simple tool-calling, latency and cost matter more than deep reasoning.
+**Decision**: `claude-haiku-4-5-20251001`, pinned as a string literal in `agent/bot.py`, matching `CLAUDE.md`. Right call for this task shape — short bounded conversation, simple tool-calling, latency and cost matter more than deep reasoning.
 
 **Remaining gap**: it's still a hardcoded literal, not read from an env var — a model change at deploy time needs a code edit.
 
@@ -55,7 +55,7 @@ Study guide for talking through this project's agent design. Grounded in the act
 
 ## 4. The agentic loop (ReAct), hand-rolled
 
-**Decision**: `agent/bot.py:chat()`, lines ~318–381. Raw `while response.stop_reason == "tool_use"` loop against the Anthropic Messages API directly — no framework.
+**Decision**: `agent/bot.py:chat()`. Raw `while response.stop_reason == "tool_use"` loop against the Anthropic Messages API directly — no framework.
 - Each iteration: append the assistant's tool-use block(s) to `history`, execute the tool(s) locally and synchronously, append `tool_result`, call `messages.create()` again.
 - `MAX_TOOL_ITERATIONS = 5` acts as a circuit breaker against runaway tool-call loops.
 - On cap-out: the code returns a canned fallback **without appending the dangling `tool_use` block** to history — so the next turn's API call doesn't fail on an unmatched tool_use/tool_result pair. This is the detail that shows you understand the Messages API's structural invariants, not just "loop until done."
@@ -70,7 +70,7 @@ Study guide for talking through this project's agent design. Grounded in the act
 
 **Hallucination control** — two independent mechanisms:
 1. **Catalog grounding**: the model can only ever see racquets from `search_racquets()`'s output, which reads `racquets.json` — never invents products/prices (`CLAUDE.md` hard rule, enforced by the tool boundary, not by the model's honesty).
-2. **`is_explicit_confirmation()`** (`bot.py:111`): before `book_fitting` writes anything, the backend independently re-scans the customer's *raw last message* for negation markers (唔係/唔好/cancel/no) and confirmation markers (係/OK/好), rather than trusting the model's claim that "the customer confirmed." Even a hallucinated confirmation from the model gets blocked if the literal text doesn't back it up.
+2. **`is_explicit_confirmation()`** (`bot.py`): before `book_fitting` writes anything, the backend independently re-scans the customer's *raw last message* for negation markers (唔係/唔好/cancel/no) and confirmation markers (係/OK/好), rather than trusting the model's claim that "the customer confirmed." Even a hallucinated confirmation from the model gets blocked if the literal text doesn't back it up.
 
 **Say out loud**: "Grounding and confirmation are solving different problems — grounding stops invented products, the confirmation check stops the model from acting on its own mistaken belief about what the customer said. The second one is the one I'd defend hardest: never trust the model's account of user intent for an irreversible action, check the source text."
 
@@ -146,7 +146,7 @@ Single Flask process, `debug=False` dev server, everything in-memory, tool execu
 ## 12. Tradeoffs and roadmap ("if I had more time")
 
 Pull directly from `ARCHITECTURE.md §10`, in priority order — this already reads as "I know exactly what's next":
-1. Single source of truth for the catalog (`web/index.html` currently hardcodes a second, divergent racquet list — have `web/index.html` fetch from `racquets.json` or a `/catalog` endpoint instead).
+1. ~~Single source of truth for the catalog~~ ✅ Done — `web/index.html` now fetches the backend's `/catalog` endpoint (which serves `racquets.json`); the Cantonese display copy lives in `racquets.json` as `tagline_zh`.
 2. Session TTL/eviction so `sessions_history`/`mock_sessions` don't grow unbounded.
 3. Persist `session_id` to `localStorage` so a page refresh doesn't start a "new customer."
 4. Real context strategy (summarize/trim) once conversations are expected to run long — see §5's summarization approach.
@@ -171,8 +171,8 @@ Pull directly from `ARCHITECTURE.md §10`, in priority order — this already re
 | "How would you control context growth in a long conversation?" | Summarize, not truncate — once history crosses a threshold, collapse older turns into a short summary of the filled slots (budget/level/style/name/phone) and keep the last 2–3 raw turns verbatim, so truncation can't silently drop a slot the model then re-asks. Not built yet — named next step. |
 | "Why not use LangChain / an agent framework?" | Two tools, bounded conversation — hand-rolling gives exact control over history and the confirmation guardrail; would reconsider if scope grows. |
 | "What's your eval story — how do you know a prompt change didn't break something?" | Today: manual. `CLAUDE.md` already points at `agent/eval/conversations/` as the intended location; it doesn't exist yet — that's the next concrete step. |
-| "The website shows a racquet — does the agent actually recommend that exact one?" | Maybe not — `web/index.html` has its own hardcoded catalog copy, separate from `racquets.json`, and nothing keeps them in sync. Known issue, on the roadmap. |
-| "What's your actual model?" | `bot.py:25` pins `claude-haiku-4-5-20251001`, matching `CLAUDE.md`. Still a hardcoded literal, not env-configurable yet. |
+| "The website shows a racquet — does the agent actually recommend that exact one?" | Yes — the grid fetches the backend's `/catalog` endpoint, which serves the same `racquets.json` the agent's `search_racquets` reads. One catalog, no second copy. |
+| "What's your actual model?" | `bot.py` pins `claude-haiku-4-5-20251001`, matching `CLAUDE.md`. Still a hardcoded literal, not env-configurable yet. |
 | "How would this scale past one user at a time?" | It wouldn't yet — single process, in-memory sessions, no rate limiting, non-concurrency-safe CSV writes. That's the honest v1 boundary. See §11 for exactly what changes first. |
 
 ---
