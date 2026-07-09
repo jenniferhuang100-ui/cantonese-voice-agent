@@ -16,6 +16,18 @@ Study guide for talking through this project's agent design. Grounded in the act
 
 ---
 
+## 1a. Single agent, not sequential/multi-agent
+
+**Decision**: one LLM, one system prompt, one tool-calling loop (`agent/bot.py`) handles the whole conversation end-to-end — qualifying questions, recommendation, and booking. This is *not* a sequential pipeline of specialized agents (e.g. an "intent router" agent handing off to a "recommender" agent handing off to a "booking" agent), and not a multi-agent/orchestrator pattern.
+
+**Why**: the task is small enough that hand-offs would cost more than they'd buy — two tools, one persona, one bounded conversation. A multi-agent split adds inter-agent coordination, extra LLM calls per turn (cost + latency), and more moving state to keep in sync, without solving a problem this task shape actually has. It becomes worth it once sub-tasks need genuinely different personas, tool access, or context windows — e.g., a completely different product line, or a human-handoff agent with its own guardrails — not before.
+
+**Say out loud**: "It's a single agent on purpose, not a pipeline. Two tools and one bounded conversation don't need inter-agent hand-offs — that would just add latency and coordination cost. I'd revisit this the moment a sub-task genuinely needs a different persona or tool set than the rest of the conversation."
+
+**Gap risk**: if Tom asks "why not split recommendation and booking into separate agents," the honest answer is exactly the tradeoff above — you can also point out `mock_reply()`'s FSM as proof you can name the alternative even for the *workflow* axis (§1); this section is the *single-vs-multi-agent* axis, a different question worth distinguishing if he conflates them.
+
+---
+
 ## 2. PRD → Agent Design → Architecture as a process
 
 **Decision**: three docs, three altitudes.
@@ -33,11 +45,11 @@ Study guide for talking through this project's agent design. Grounded in the act
 
 ## 3. Model selection
 
-**Decision**: `claude-3-5-haiku-20241022`, pinned as a string literal at `agent/bot.py:25`. Right call for this task shape — short bounded conversation, simple tool-calling, latency and cost matter more than deep reasoning.
+**Decision**: `claude-haiku-4-5-20251001`, pinned as a string literal at `agent/bot.py:25`, matching `CLAUDE.md`. Right call for this task shape — short bounded conversation, simple tool-calling, latency and cost matter more than deep reasoning.
 
-**Gap**: `CLAUDE.md` says the intended model is `claude-haiku-4-5`. These disagree. Only `bot.py:25` actually controls runtime behavior — whichever doc is "aspirational," the code is truth.
+**Remaining gap**: it's still a hardcoded literal, not read from an env var — a model change at deploy time needs a code edit.
 
-**Say out loud**: "I chose Haiku deliberately for cost/latency on a bounded conversation, not because it's the default — but I have a stale reference to reconcile between CLAUDE.md and the actual pinned model string."
+**Say out loud**: "I chose Haiku deliberately for cost/latency on a bounded conversation, not because it's the default. It's still a hardcoded literal though — next step is pulling it from an env var so a model swap doesn't need a code change."
 
 ---
 
@@ -54,7 +66,7 @@ Study guide for talking through this project's agent design. Grounded in the act
 
 ## 5. Context management vs. hallucination control (two different things)
 
-**Context management** (`ARCHITECTURE.md §6`): full transcript resent on every call, no windowing, no summarization, no caching (system prompt and catalog JSON are both re-read from disk every request). Fine for a 3-question bounded flow; will not hold up for long or multi-session conversations — cost and latency grow unbounded within a process lifetime.
+**Context management** (`ARCHITECTURE.md §6/§6a`): full transcript resent on every call, no windowing, no summarization, no caching (system prompt and catalog JSON are both re-read from disk every request). Fine for a 3-question bounded flow; will not hold up for long or multi-session conversations — cost and latency grow unbounded within a process lifetime. **The fix, when needed, is summarization, not blunt truncation**: once history crosses a turn/token threshold, collapse the older turns into a short summary of the slots already filled (budget/level/style/name/phone) and keep only the last 2–3 raw turns verbatim — truncation alone risks silently dropping a slot the model then re-asks or contradicts.
 
 **Hallucination control** — two independent mechanisms:
 1. **Catalog grounding**: the model can only ever see racquets from `search_racquets()`'s output, which reads `racquets.json` — never invents products/prices (`CLAUDE.md` hard rule, enforced by the tool boundary, not by the model's honesty).
@@ -67,6 +79,8 @@ Study guide for talking through this project's agent design. Grounded in the act
 ## 6. Memory / state, and why there's no user database
 
 **Decision**: `sessions_history` — an in-process Python dict, keyed by `session_id`, holding the full transcript sent to Anthropic. `mock_sessions` is a second, deliberately isolated dict for the FSM demo path. No database, no persistence. This matches `PRD.md`'s explicit scope cut: "Memory across sessions (each conversation starts fresh)."
+
+**Why RAM over a database — the cost argument**: a database (even a small managed Postgres/Redis) is infrastructure that costs money and attention *even when idle* — provisioning, a connection to manage, a schema to migrate, a network round-trip added to every single turn. For a v1 conversation that's a few minutes long and doesn't need to survive a restart, that's pure overhead with no corresponding benefit. An in-process dict is free and faster (no network hop) for exactly this shape of workload. The calculus flips the moment either (a) sessions need to survive a redeploy/crash, or (b) this runs on more than one worker/instance — at that point RAM stops working *at all* (see failure modes below), not just becomes suboptimal, and a database stops being optional.
 
 **Concrete failure modes** (know these cold):
 - Server restart/redeploy/crash silently wipes every in-flight conversation — no warning to the user.
@@ -89,7 +103,7 @@ This split — cheap/idempotent tools the model can call at will vs. one dangero
 
 **Tradeoff in `search_racquets`'s graceful degradation**: relaxing filters means a "beginner" search can silently return advanced racquets if nothing matches beginner + style. Optimizes for "always have something to say" over "only return what was literally asked for" — a defensible v1 choice, but worth naming as a choice.
 
-**Gap risk**: `agent/tools/catalog.py` and `agent/tools/booking.py` exist as standalone, cleaner reimplementations of these two tools — **but `bot.py` never imports them**. It has its own inline versions, and they disagree: `bot.py`'s `search_racquets` defaults missing `in_stock` to `True`, while `tools/catalog.py`'s defaults it to falsy (excluded). This is dead code today. If Tom asks "which file is actually running," the honest answer is `bot.py`'s inline functions — the `tools/` module does nothing at runtime. Decide before tomorrow: delete `tools/*`, or wire it in and remove the duplication.
+**Tool calling logic, concretely**: both tools are declared in `TOOLS_SCHEMA` (`bot.py`) as Anthropic tool-use schemas (name, description, JSON-schema `input_schema`). The model decides when to call them based on the system prompt's instructions and the conversation so far — the code never forces a call. When the model emits a `tool_use` block, `bot.py`'s loop reads `block.name`/`block.input`, dispatches to the matching Python function (`search_racquets(**tool_args)` or `handle_book_fitting(tool_args, user_msg)`), and feeds the JSON result back as a `tool_result` block so the model can use it to write its next reply. `search_racquets` is imported from `agent/tools/catalog.py` and `book_fitting` from `agent/tools/booking.py` — one implementation, no inline duplicates in `bot.py`.
 
 ---
 
@@ -132,16 +146,15 @@ Single Flask process, `debug=False` dev server, everything in-memory, tool execu
 ## 12. Tradeoffs and roadmap ("if I had more time")
 
 Pull directly from `ARCHITECTURE.md §10`, in priority order — this already reads as "I know exactly what's next":
-1. Delete or wire up `agent/tools/*` (stop the dead-code trap).
-2. Single source of truth for the catalog (`web/index.html` currently hardcodes a second, divergent racquet list — have `web/index.html` fetch from `racquets.json` or a `/catalog` endpoint instead).
-3. Session TTL/eviction so `sessions_history`/`mock_sessions` don't grow unbounded.
-4. Persist `session_id` to `localStorage` so a page refresh doesn't start a "new customer."
-5. Real context strategy (summarize/trim) once conversations are expected to run long.
-6. Reconcile the model ID between `CLAUDE.md` and `bot.py`; read it from an env var.
-7. Structured logging around tool calls (name, args, latency, result size).
-8. Decide the mock-mode maintenance story explicitly (generate it from the real prompt, or accept and guard the duplication).
-9. Rate limiting + restricted CORS before any public push.
-10. Create the `agent/eval/conversations/` fixtures `CLAUDE.md` already references.
+1. Single source of truth for the catalog (`web/index.html` currently hardcodes a second, divergent racquet list — have `web/index.html` fetch from `racquets.json` or a `/catalog` endpoint instead).
+2. Session TTL/eviction so `sessions_history`/`mock_sessions` don't grow unbounded.
+3. Persist `session_id` to `localStorage` so a page refresh doesn't start a "new customer."
+4. Real context strategy (summarize/trim) once conversations are expected to run long — see §5's summarization approach.
+5. Read the model ID from an env var so a deploy-time change doesn't need a code edit.
+6. Structured logging around tool calls (name, args, latency, result size).
+7. Decide the mock-mode maintenance story explicitly (generate it from the real prompt, or accept and guard the duplication).
+8. Rate limiting + restricted CORS before any public push.
+9. Create the `agent/eval/conversations/` fixtures `CLAUDE.md` already references.
 
 ---
 
@@ -149,15 +162,18 @@ Pull directly from `ARCHITECTURE.md §10`, in priority order — this already re
 
 | Likely question | Answer |
 |---|---|
-| "Which file actually runs — `bot.py`'s inline tools or `agent/tools/*`?" | `bot.py`'s inline versions; `agent/tools/*` is currently dead code, not imported anywhere. |
+| "Which file actually runs — `bot.py`'s inline tools or `agent/tools/*`?" | `agent/tools/*` — `bot.py` imports `search_racquets`/`book_fitting` from there directly, no inline duplicates. |
+| "Why one agent instead of separate agents for recommending vs. booking?" | Two tools, one bounded conversation — a hand-off between specialized agents would add coordination overhead and extra LLM calls without solving a problem this task shape has. Revisit if a sub-task needs a genuinely different persona or tool set. |
+| "Why RAM instead of a database for session state?" | A database costs money and ops attention even idle, plus a network round-trip per turn — not worth it for a few-minutes-long v1 conversation that doesn't need to survive a restart. The moment sessions need to survive a redeploy or run on >1 worker, RAM stops working entirely and a database becomes non-optional. |
 | "Does `capture_lead()` actually get called?" | No — it's specified in `AGENT_DESIGN.md`'s escalation flow but not implemented yet. Named gap, not a surprise. |
 | "What happens if the server restarts mid-conversation?" | Silent history loss — in-memory only, no persistence, matches the PRD's explicit "no cross-session memory" scope for v1. |
 | "How do you know the model isn't hallucinating a booking confirmation?" | It doesn't matter what the model believes — `is_explicit_confirmation()` re-checks the customer's literal last message server-side before any write. |
+| "How would you control context growth in a long conversation?" | Summarize, not truncate — once history crosses a threshold, collapse older turns into a short summary of the filled slots (budget/level/style/name/phone) and keep the last 2–3 raw turns verbatim, so truncation can't silently drop a slot the model then re-asks. Not built yet — named next step. |
 | "Why not use LangChain / an agent framework?" | Two tools, bounded conversation — hand-rolling gives exact control over history and the confirmation guardrail; would reconsider if scope grows. |
 | "What's your eval story — how do you know a prompt change didn't break something?" | Today: manual. `CLAUDE.md` already points at `agent/eval/conversations/` as the intended location; it doesn't exist yet — that's the next concrete step. |
 | "The website shows a racquet — does the agent actually recommend that exact one?" | Maybe not — `web/index.html` has its own hardcoded catalog copy, separate from `racquets.json`, and nothing keeps them in sync. Known issue, on the roadmap. |
-| "What's your actual model — Haiku 4.5 or 3.5?" | `bot.py:25` pins `claude-3-5-haiku-20241022`; `CLAUDE.md` says `claude-haiku-4-5` — needs reconciling, code is the source of truth today. |
-| "How would this scale past one user at a time?" | It wouldn't yet — single process, in-memory sessions, no rate limiting, non-concurrency-safe CSV writes. That's the honest v1 boundary. |
+| "What's your actual model?" | `bot.py:25` pins `claude-haiku-4-5-20251001`, matching `CLAUDE.md`. Still a hardcoded literal, not env-configurable yet. |
+| "How would this scale past one user at a time?" | It wouldn't yet — single process, in-memory sessions, no rate limiting, non-concurrency-safe CSV writes. That's the honest v1 boundary. See §11 for exactly what changes first. |
 
 ---
 

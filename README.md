@@ -18,8 +18,8 @@ For the full technical write-up (architecture, data flow, memory/loop design, tr
 agent/
   bot.py                    # Flask app: /chat, /health, tool loop, mock mode, booking guardrail
   prompts/system_prompt.md  # Cantonese system prompt (source of behavior/persona)
-  tools/catalog.py          # Standalone search_racquets() — not currently imported by bot.py
-  tools/booking.py          # Standalone book_fitting() — not currently imported by bot.py
+  tools/catalog.py          # search_racquets() — imported and called by bot.py
+  tools/booking.py          # book_fitting() — imported and called by bot.py
   data/racquets.json        # Source of truth for what the agent can recommend
   data/bookings.csv         # Generated at runtime; not committed
 web/

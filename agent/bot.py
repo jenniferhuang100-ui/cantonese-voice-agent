@@ -1,12 +1,21 @@
+"""
+拍友 (Paak Yau) backend — single-agent design, not a sequential/multi-agent
+pipeline: one LLM (Haiku 4.5), one system prompt, one tool-calling loop
+handles qualifying questions, recommendation, and booking end-to-end.
+See docs/ARCHITECTURE.md §4 and docs/WALKTHROUGH_PREP.md §1a for the
+"why one agent, not several" reasoning.
+"""
 import os
 import re
 import sys
 import json
-import csv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from anthropic import Anthropic
+
+from tools.catalog import search_racquets
+from tools.booking import book_fitting
 
 # Force Windows console/server logs to print Cantonese (UTF-8) without crashing
 if sys.stdout.encoding != 'utf-8':
@@ -22,7 +31,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)  # Crucial: This permits your index.html file to call the backend!
 
-MODEL = "claude-3-5-haiku-20241022"  # Current Anthropic SDK standard
+MODEL = "claude-haiku-4-5-20251001"
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=20.0)
 
 # Demo mode switch: MOCK=1 forces the scripted offline agent below even if a
@@ -33,7 +42,11 @@ MOCK_MODE = os.getenv("MOCK", "0") == "1" or not os.getenv("ANTHROPIC_API_KEY")
 
 MAX_TOOL_ITERATIONS = 5
 
-# Memory bank dictionary to keep conversation history isolated per session_id
+# In-process dict, not a database: session state only needs to survive one
+# short conversation in one process, so RAM is free where a DB would add
+# infra cost, a schema, and a network round-trip per turn for no benefit at
+# this scale. Tradeoff: wiped on restart, doesn't survive >1 worker/replica
+# (see docs/ARCHITECTURE.md §7 for the migration path once that's needed).
 sessions_history = {}
 
 # Separate, isolated state store for the scripted MOCK_MODE conversation —
@@ -41,64 +54,8 @@ sessions_history = {}
 mock_sessions = {}
 
 # --- CORE INTEGRATED TOOLS ---
-
-def search_racquets(budget_max_hkd=None, level=None, play_style=None):
-    catalog_path = os.path.join(os.path.dirname(__file__), "data", "racquets.json")
-    if not os.path.exists(catalog_path):
-        return {"error": "Catalog data file missing."}
-
-    with open(catalog_path, "r", encoding="utf-8") as f:
-        racquets = json.load(f)
-
-    # Map mapping user Cantonese filters to data keys
-    level_map = {"初": "beginner", "中": "intermediate", "高": "advanced"}
-    style_map = {"底線": "baseliner", "上網": "net-rush", "雙打": "doubles"}
-
-    def _filter(use_budget, use_level, use_style):
-        out = []
-        for r in racquets:
-            if not r.get("in_stock", True):
-                continue
-            if use_budget and r.get("price_hkd", 0) > use_budget:
-                continue
-            if use_level:
-                mapped_lvl = level_map.get(use_level[0], use_level)
-                if not any(mapped_lvl in b for b in r.get("best_for", [])):
-                    continue
-            if use_style:
-                mapped_style = style_map.get(use_style, use_style)
-                if not any(mapped_style in b for b in r.get("best_for", [])):
-                    continue
-            out.append(r)
-        return out
-
-    # Exact filters first; if that's empty, relax play_style, then level, then
-    # budget, in that order, so the catalog never hands the model a dead end
-    # (e.g. today every "beginner" pick has zero results for any play style,
-    # since neither beginner racquet is tagged baseliner/net-rush/doubles).
-    for b, l, s in [
-        (budget_max_hkd, level, play_style),
-        (budget_max_hkd, level, None),
-        (budget_max_hkd, None, None),
-        (None, None, None),
-    ]:
-        results = _filter(b, l, s)
-        if results:
-            return results
-    return []
-
-def book_fitting(name, phone, datetime_str):
-    data_dir = os.path.join(os.path.dirname(__file__), "data")
-    os.makedirs(data_dir, exist_ok=True)
-    csv_path = os.path.join(data_dir, "bookings.csv")
-    
-    file_exists = os.path.exists(csv_path)
-    with open(csv_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["Name", "Phone", "DateTime"])  # Header row
-        writer.writerow([name, phone, datetime_str])
-    return {"status": "success", "message": f"Successfully booked for {name}."}
+# search_racquets and book_fitting are implemented in tools/catalog.py and
+# tools/booking.py; imported at the top of this file.
 
 # Backend-enforced confirmation check: independent of what the model claims,
 # this inspects the customer's own latest message before any booking is written.

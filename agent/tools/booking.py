@@ -1,17 +1,18 @@
 import csv
-from pathlib import Path
+import os
 
-BOOKINGS_PATH = Path(__file__).resolve().parent.parent / "data" / "bookings.csv"
-FIELDNAMES = ["name", "phone", "datetime"]
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+CSV_PATH = os.path.join(DATA_DIR, "bookings.csv")
 
 
 def book_fitting(name, phone, datetime_str):
-    file_exists = BOOKINGS_PATH.exists()
+    os.makedirs(DATA_DIR, exist_ok=True)
+    file_exists = os.path.exists(CSV_PATH)
 
-    with open(BOOKINGS_PATH, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+    with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
         if not file_exists:
-            writer.writeheader()
-        writer.writerow({"name": name, "phone": phone, "datetime": datetime_str})
+            writer.writerow(["Name", "Phone", "DateTime"])
+        writer.writerow([name, phone, datetime_str])
 
-    return {"status": "confirmed", "name": name, "phone": phone, "datetime": datetime_str}
+    return {"status": "success", "message": f"Successfully booked for {name}."}
