@@ -14,7 +14,7 @@ Browser (web/index.html)
                                                   ├─ loads system_prompt.md
                                                   ├─ loads racquets.json (per tool call)
                                                   ├─ in-memory session history (dict)
-                                                  ├─ Anthropic Messages API (tool-use loop)
+                                                  ├─ DeepSeek chat-completions API (tool-calling loop)
                                                   └─ appends to bookings.csv on confirmed booking
 ```
 
@@ -25,16 +25,16 @@ There is no database, no message queue, no background worker, and no persistent 
 This is the core of the system, all in `agent/bot.py:chat()`:
 
 1. Client POSTs `{message, session_id}` to `/chat`.
-2. If `MOCK_MODE` is on (no API key, or `MOCK=1`), the request is routed entirely to `mock_reply()` — a scripted finite-state machine — and the Anthropic API is never called. See §5.
+2. If `MOCK_MODE` is on (no API key, or `MOCK=1`), the request is routed entirely to `mock_reply()` — a scripted finite-state machine — and the DeepSeek API is never called. See §5.
 3. Otherwise: `system_prompt.md` is read from disk on **every request** (no caching), the per-session `history` list is fetched from the in-process `sessions_history` dict, and the new user message is appended to it.
-4. The full `history` array is sent to `client.messages.create()` along with the system prompt and the two tool schemas (`search_racquets`, `book_fitting`).
-5. If `response.stop_reason == "tool_use"`, the code enters a hand-rolled ReAct loop:
-   - Append the assistant's tool-use content block(s) to `history`.
+4. The system prompt is prepended as the first message (OpenAI-style APIs take it as a message, not a parameter) and the full `history` array is sent to `client.chat.completions.create()` along with the two tool schemas (`search_racquets`, `book_fitting`).
+5. If `finish_reason == "tool_calls"`, the code enters a hand-rolled ReAct loop:
+   - Append the assistant's message (including its `tool_calls` list) to `history`.
    - Execute each requested tool locally (`search_racquets()` or `handle_book_fitting()`), synchronously, in-process.
-   - Append a `tool_result` message (JSON-encoded) back into `history`.
-   - Call `messages.create()` again with the updated history.
-   - Repeat until the model returns plain text (`stop_reason != "tool_use"`) or `MAX_TOOL_ITERATIONS` (5) is hit.
-6. On the 5-iteration cap, the loop **bails without appending the dangling tool_use block**, so the next turn's history stays well-formed for the API (an unmatched `tool_use`/`tool_result` pair would make the next API call fail validation). A canned Cantonese fallback is returned instead.
+   - Append one `role: "tool"` message per call (JSON-encoded result, matched to the request by `tool_call_id`) back into `history`.
+   - Call `chat.completions.create()` again with the updated history.
+   - Repeat until the model returns plain text (`finish_reason != "tool_calls"`) or `MAX_TOOL_ITERATIONS` (5) is hit.
+6. On the 5-iteration cap, the loop **bails without appending the unanswered `tool_calls` message**, so the next turn's history stays well-formed for the API (a `tool_calls` message with no matching `role: "tool"` replies would make the next API call fail validation). A canned Cantonese fallback is returned instead.
 7. The final text response is appended to `history` and returned to the client as `{reply}`.
 8. The widget renders the bubble and immediately calls `speakOutLoud()` to read it aloud via `SpeechSynthesis`.
 
@@ -58,7 +58,7 @@ There is no streaming — the client waits for the full loop (including any tool
 
 ## 4. Agent design
 
-- **Single agent, not sequential/multi-agent.** One LLM (Haiku 4.5), one system prompt, one tool-calling loop handles the entire conversation — qualifying questions, recommendation, and booking. There is no pipeline of specialized agents (e.g., an "intent classifier" agent handing off to a "recommender" agent handing off to a "booking" agent) and no sequential/orchestrator pattern. This is a deliberate choice, not a default: the conversation is short (3 qualifying questions → recommend → optional book) and uses exactly two tools, so a hand-off between specialized agents would add inter-agent coordination overhead, extra LLM calls (cost/latency) per turn, and more state to keep synchronized — without solving a problem this task shape actually has. A sequential/multi-agent design becomes worth it when sub-tasks need genuinely different personas, tool access, or context windows (e.g., a separate agent for a completely different product line, or a human-handoff agent with different guardrails) — not before.
+- **Single agent, not sequential/multi-agent.** One LLM (DeepSeek V3), one system prompt, one tool-calling loop handles the entire conversation — qualifying questions, recommendation, and booking. There is no pipeline of specialized agents (e.g., an "intent classifier" agent handing off to a "recommender" agent handing off to a "booking" agent) and no sequential/orchestrator pattern. This is a deliberate choice, not a default: the conversation is short (3 qualifying questions → recommend → optional book) and uses exactly two tools, so a hand-off between specialized agents would add inter-agent coordination overhead, extra LLM calls (cost/latency) per turn, and more state to keep synchronized — without solving a problem this task shape actually has. A sequential/multi-agent design becomes worth it when sub-tasks need genuinely different personas, tool access, or context windows (e.g., a separate agent for a completely different product line, or a human-handoff agent with different guardrails) — not before.
 - **Persona**: 拍友, colloquial Cantonese (口語), casually mixes English brand names. Enforced entirely through the system prompt text, not through code-level filtering of output language.
 - **Fixed question order**: budget → level → play style → recommend → (optional) book. This is a scripted slot-filling flow expressed as *prose instructions* to the LLM, not as explicit code-tracked state — the model itself is trusted to remember which slots are filled and what to ask next, using the conversation history as its only state.
 - **Two-tool design**: `search_racquets` (read-only, freely callable) and `book_fitting` (side-effecting, gated). This split — cheap/idempotent tools the model can call at will vs. one dangerous tool with a backend-enforced check — is the main safety mechanism in the system.
@@ -94,7 +94,7 @@ These get conflated in casual conversation about "AI reliability," but the mecha
 
 There are two, unrelated stores, both in-process Python dicts with no persistence:
 
-- `sessions_history` — the real conversation transcript sent to Anthropic, keyed by `session_id`.
+- `sessions_history` — the real conversation transcript sent to the LLM, keyed by `session_id`.
 - `mock_sessions` — separate state for the scripted mock flow, keyed by the same `session_id` but deliberately isolated so the two code paths never cross-contaminate.
 
 Properties of this design (from `PRD.md`'s explicit out-of-scope: "Memory across sessions (each conversation starts fresh)"):
@@ -109,8 +109,8 @@ This is a reasonable, deliberate tradeoff for a v1 demo (matches the PRD's expli
 
 ## 8. Orchestration and tooling choices
 
-- **No agent framework.** The tool-calling loop is hand-rolled directly against the raw Anthropic Messages API (`anthropic` SDK's `client.messages.create`), not LangChain/LlamaIndex/an Anthropic agent framework. Tradeoff: full visibility and control over exactly what gets appended to history and when (which is what makes the iteration cap and the confirmation guardrail possible to implement precisely) — at the cost of having to hand-implement things a framework would give for free: retries/backoff, streaming, structured tracing, automatic context trimming.
-- **Model pinned by string literal**: `MODEL = "claude-haiku-4-5-20251001"` in `bot.py`, matching `CLAUDE.md`'s stated `claude-haiku-4-5`. Still a hardcoded literal, not an env var — a deploy-time model change requires a code edit.
+- **No agent framework.** The tool-calling loop is hand-rolled directly against the OpenAI-compatible chat-completions API (the `openai` SDK pointed at DeepSeek's base URL), not LangChain/LlamaIndex/an agent framework. Tradeoff: full visibility and control over exactly what gets appended to history and when (which is what makes the iteration cap and the confirmation guardrail possible to implement precisely) — at the cost of having to hand-implement things a framework would give for free: retries/backoff, streaming, structured tracing, automatic context trimming.
+- **Model pinned by string literal**: `MODEL = "deepseek-chat"` (V3) in `bot.py`, matching `CLAUDE.md`. Deliberately NOT `deepseek-reasoner` — the reasoner model doesn't support function calling, and this agent is built around two tools. Still a hardcoded literal, not an env var — a deploy-time model change requires a code edit.
 - **Tool execution is synchronous and untraced.** Tool calls run inline in the request thread with no logging of which tool was called with what arguments beyond a bare `print()` on exceptions — debugging a bad recommendation in production means reproducing it, not reading a log.
 - **Iteration cap as a circuit breaker** (`MAX_TOOL_ITERATIONS = 5`): protects against runaway tool-call loops (e.g., a model repeatedly calling `search_racquets` with slightly different args) turning into unbounded latency/cost. Good defensive default; the fallback message it returns is generic rather than telling the user anything about *why* it stopped.
 - **Error handling is string-sniffing.** The single `except Exception` handler classifies billing errors by checking whether `"credit"` or `"balance"` appears (case-insensitively) in `str(e)` — fragile if the SDK's error message wording changes, and it collapses all other failure modes (network, auth, malformed tool args, rate limit) into one generic "try again later" reply.

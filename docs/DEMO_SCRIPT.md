@@ -7,7 +7,7 @@ Exact commands and talking points. For the design reasoning behind these choices
 **PowerShell, from the repo root** (`c:\Users\jenni\cantonese-voice-agent`):
 
 ```powershell
-# Real LLM mode (uses your ANTHROPIC_API_KEY from .env, costs a small amount of API credit)
+# Real LLM mode (uses your DEEPSEEK_API_KEY from .env, costs a small amount of API credit)
 python agent/bot.py
 ```
 
@@ -26,7 +26,7 @@ $env:MOCK = "1"
 python agent/bot.py
 ```
 
-Same health check. This mode never calls Anthropic — use it live tomorrow if wifi/API is flaky, or to demo repeatedly without spending credits.
+Same health check. This mode never calls DeepSeek — use it live tomorrow if wifi/API is flaky, or to demo repeatedly without spending credits.
 
 To go back to real mode later in the same terminal: `$env:MOCK = "0"` (or close and reopen the terminal — env vars set with `$env:` don't persist across sessions).
 
@@ -46,7 +46,7 @@ Type or say these in order (voice: click the mic button, speak, wait for the wid
 
 1. **"我想搵支拍"** (I want to find a racquet)
    → Agent asks budget. *[shows: agent stays on-script even from an open-ended opener]*
-2. **"1500"**
+2. **"2000"** *(use 2000, not 1500 — at 1500 every intermediate baseliner racquet is over budget and the fallback shows beginner models, which looks wrong live)*
    → Agent asks level (初/中/高).
 3. **"中級"** (intermediate)
    → Agent asks play style (底線/上網/雙打).
@@ -76,7 +76,7 @@ Have a second terminal ready with this — it bypasses the browser entirely and 
 ```powershell
 curl.exe -X POST http://localhost:5000/chat `
   -H "Content-Type: application/json" `
-  -d '{\"message\":\"我想搵支拍，預算1500\",\"session_id\":\"live_demo\"}'
+  -d '{\"message\":\"我想搵支拍，預算2000\",\"session_id\":\"live_demo\"}'
 ```
 
 You should get back a JSON `{"reply": "..."}` in Cantonese.
@@ -97,7 +97,7 @@ Same conversation script above still works — `mock_reply()` in `agent/bot.py` 
 | What | File | Function/section |
 |---|---|---|
 | Flask routes (`/health`, `/chat`) | `agent/bot.py` | `health()`, `chat()` |
-| The agentic tool-use loop | `agent/bot.py` | inside `chat()`, the `while response.stop_reason == "tool_use":` block |
+| The agentic tool-use loop | `agent/bot.py` | inside `chat()`, the `while ... finish_reason == "tool_calls":` block |
 | Racquet search + catalog filtering | `agent/tools/catalog.py` | `search_racquets()` |
 | Booking write (CSV) | `agent/tools/booking.py` | `book_fitting()` |
 | Backend-enforced confirmation check | `agent/bot.py` | `is_explicit_confirmation()`, `handle_book_fitting()` |

@@ -14,7 +14,7 @@ Customer speaks or types Cantonese → gets racquet recommendations → books a 
 
 \- Backend: Python + Flask server in agent/bot.py
 
-\- LLM: Anthropic claude-haiku-4-5 via the Anthropic Python SDK
+\- LLM: DeepSeek deepseek-chat (V3) via the OpenAI-compatible API (openai Python SDK)
 
 \- Voice: Browser Web Speech API (SpeechRecognition + SpeechSynthesis, lang=zh-HK) — no paid STT/TTS
 
@@ -44,7 +44,7 @@ Customer speaks or types Cantonese → gets racquet recommendations → books a 
 
 \- Frontend: open web/index.html in Chrome (no server needed locally)
 
-\- For deployment: Railway or Render, set ANTHROPIC\_API\_KEY as environment variable
+\- For deployment: Railway or Render, set DEEPSEEK\_API\_KEY as environment variable
 
 
 

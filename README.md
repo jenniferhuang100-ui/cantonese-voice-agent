@@ -7,7 +7,7 @@ For the full technical write-up (architecture, data flow, memory/loop design, tr
 ## Stack
 
 - **Backend**: Python + Flask (`agent/bot.py`)
-- **LLM**: Anthropic Claude (Messages API + tool use), called directly via the `anthropic` Python SDK — no agent framework
+- **LLM**: DeepSeek V3 (`deepseek-chat`, OpenAI-compatible chat-completions API + tool use), called directly via the `openai` Python SDK — no agent framework
 - **Voice**: Browser-native Web Speech API (`SpeechRecognition` + `SpeechSynthesis`, `lang=zh-HK`) — no paid STT/TTS vendor
 - **Frontend**: Plain HTML/CSS/JS, no build step, no framework
 - **Storage**: Flat files — `agent/data/racquets.json` (catalog) and `agent/data/bookings.csv` (bookings), no database
@@ -37,17 +37,17 @@ docs/
 **Backend**
 ```bash
 pip install -r requirements.txt
-cp .env.example .env        # then fill in ANTHROPIC_API_KEY
+cp .env.example .env        # then fill in DEEPSEEK_API_KEY
 python agent/bot.py         # starts Flask on http://localhost:5000
 ```
 
 **Frontend** — just open `web/index.html` in Chrome (Web Speech API support is best there). No build step needed — but the backend must be running, since both the catalog grid and the chat widget call it.
 
-**Demo without an API key** — leave `ANTHROPIC_API_KEY` empty, or set `MOCK=1`. The backend falls back to a scripted, LLM-free conversation flow that walks the same question order as the real prompt (see `MOCK_MODE` in `agent/bot.py`).
+**Demo without an API key** — leave `DEEPSEEK_API_KEY` empty, or set `MOCK=1`. The backend falls back to a scripted, LLM-free conversation flow that walks the same question order as the real prompt (see `MOCK_MODE` in `agent/bot.py`).
 
 ## Deployment
 
-Configured for Railway (`railway.json`, `Procfile.txt`) — set `ANTHROPIC_API_KEY` as an environment variable on the host. `bot.py` binds to the host-injected `PORT` env var (defaults to 5000 locally). The frontend's API base URL is computed once in `web/index.html` (`window.API_BASE`): localhost when served locally, the deployed Railway URL otherwise.
+Configured for Railway (`railway.json`, `Procfile.txt`) — set `DEEPSEEK_API_KEY` as an environment variable on the host. `bot.py` binds to the host-injected `PORT` env var (defaults to 5000 locally). The frontend's API base URL is computed once in `web/index.html` (`window.API_BASE`): localhost when served locally, the deployed Railway URL otherwise.
 
 ## Hard rules (see `CLAUDE.md` for the full list)
 

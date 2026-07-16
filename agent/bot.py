@@ -1,6 +1,7 @@
 """
 拍友 (Paak Yau) backend — single-agent design, not a sequential/multi-agent
-pipeline: one LLM (Haiku 4.5), one system prompt, one tool-calling loop
+pipeline: one LLM (DeepSeek V3 via the OpenAI-compatible API), one system
+prompt, one tool-calling loop
 handles qualifying questions, recommendation, and booking end-to-end.
 See docs/ARCHITECTURE.md §4 and docs/WALKTHROUGH_PREP.md §1a for the
 "why one agent, not several" reasoning.
@@ -12,7 +13,7 @@ import json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-from anthropic import Anthropic
+from openai import OpenAI
 
 from tools.catalog import search_racquets, load_catalog
 from tools.booking import book_fitting
@@ -31,14 +32,20 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)  # Crucial: This permits your index.html file to call the backend!
 
-MODEL = "claude-haiku-4-5-20251001"
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=20.0)
+# deepseek-chat (V3), NOT deepseek-reasoner: the reasoner doesn't support
+# function calling, and this agent is built around two tools.
+MODEL = "deepseek-chat"
+client = OpenAI(
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com",
+    timeout=30.0,
+)
 
 # Demo mode switch: MOCK=1 forces the scripted offline agent below even if a
 # real key is present (for rehearsing without burning API credits); with no
 # override, an empty/missing key falls back to the same scripted path
-# automatically so the demo still runs with no Anthropic account at all.
-MOCK_MODE = os.getenv("MOCK", "0") == "1" or not os.getenv("ANTHROPIC_API_KEY")
+# automatically so the demo still runs with no DeepSeek account at all.
+MOCK_MODE = os.getenv("MOCK", "0") == "1" or not os.getenv("DEEPSEEK_API_KEY")
 
 MAX_TOOL_ITERATIONS = 5
 
@@ -211,31 +218,37 @@ def mock_reply(session_id, user_msg):
 
     return "多謝晒！仲有咩幫到你？"
 
-# Define schemas for Anthropic tool definitions
+# Tool definitions in OpenAI/DeepSeek function-calling format
 TOOLS_SCHEMA = [
     {
-        "name": "search_racquets",
-        "description": "Search the inventory database for matching tennis racquets based on client filters. Returns matching products.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "budget_max_hkd": {"type": "number", "description": "Maximum budget in HKD."},
-                "level": {"type": "string", "enum": ["初級", "中級", "高級"], "description": "Player skill tier level in Cantonese."},
-                "play_style": {"type": "string", "enum": ["底線", "上網", "雙打"], "description": "Player style strategy preferences in Cantonese."}
+        "type": "function",
+        "function": {
+            "name": "search_racquets",
+            "description": "Search the inventory database for matching tennis racquets based on client filters. Returns matching products.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "budget_max_hkd": {"type": "number", "description": "Maximum budget in HKD."},
+                    "level": {"type": "string", "enum": ["初級", "中級", "高級"], "description": "Player skill tier level in Cantonese."},
+                    "play_style": {"type": "string", "enum": ["底線", "上網", "雙打"], "description": "Player style strategy preferences in Cantonese."}
+                }
             }
         }
     },
     {
-        "name": "book_fitting",
-        "description": "Appends a new customer racquet fitting session reservation into the database bookings ledger sheet.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "The customer's full name."},
-                "phone": {"type": "string", "description": "The customer's contact telephone phone number string."},
-                "datetime_str": {"type": "string", "description": "Requested appointment day and timeframe schedule string."}
-            },
-            "required": ["name", "phone", "datetime_str"]
+        "type": "function",
+        "function": {
+            "name": "book_fitting",
+            "description": "Appends a new customer racquet fitting session reservation into the database bookings ledger sheet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The customer's full name."},
+                    "phone": {"type": "string", "description": "The customer's contact telephone phone number string."},
+                    "datetime_str": {"type": "string", "description": "Requested appointment day and timeframe schedule string."}
+                },
+                "required": ["name", "phone", "datetime_str"]
+            }
         }
     }
 ]
@@ -278,67 +291,66 @@ def chat():
     history = sessions_history[session_id]
     history.append({"role": "user", "content": user_msg})
 
-    try:
-        # Request generation sequence payload
-        response = client.messages.create(
+    # OpenAI-compatible API: the system prompt is the first message, not a
+    # separate parameter. It's prepended per call so history stays prompt-free.
+    def call_model():
+        return client.chat.completions.create(
             model=MODEL,
             max_tokens=1024,
-            system=system_prompt,
-            messages=history,
-            tools=TOOLS_SCHEMA
+            messages=[{"role": "system", "content": system_prompt}] + history,
+            tools=TOOLS_SCHEMA,
         )
-        
+
+    try:
+        response = call_model()
+
         # Process structural Agent ReAct routing block triggers
         tool_iterations = 0
-        while response.stop_reason == "tool_use":
+        while response.choices[0].finish_reason == "tool_calls":
             tool_iterations += 1
             if tool_iterations > MAX_TOOL_ITERATIONS:
-                # Bail out before appending an unmatched tool_use block, so
-                # history stays balanced for the next turn's API call.
+                # Bail out before appending an unanswered tool_calls message,
+                # so history stays balanced for the next turn's API call.
                 fallback = "唔好意思，呢個問題有啲複雜，可唔可以講清楚少少，或者我搵同事幫你？"
                 history.append({"role": "assistant", "content": fallback})
                 return jsonify({"reply": fallback})
 
             # Append assistant message stating intention to run tools
-            history.append({"role": "assistant", "content": response.content})
-            
-            tool_msg_contents = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    tool_name = block.name
-                    tool_args = block.input
-                    tool_id = block.id
-                    
-                    # Tool Routing execution execution matrix
-                    if tool_name == "search_racquets":
-                        result_data = search_racquets(**tool_args)
-                    elif tool_name == "book_fitting":
-                        result_data = handle_book_fitting(tool_args, user_msg)
-                    else:
-                        result_data = {"error": "Tool requested not found"}
-                        
-                    tool_msg_contents.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_id,
-                        "content": json.dumps(result_data, ensure_ascii=False)
-                    })
-            
-            # Feed tool execution output data frames clean directly back to Anthropic
-            history.append({"role": "user", "content": tool_msg_contents})
-            
-            response = client.messages.create(
-                model=MODEL,
-                max_tokens=1024,
-                system=system_prompt,
-                messages=history,
-                tools=TOOLS_SCHEMA
-            )
+            assistant_msg = response.choices[0].message
+            history.append({
+                "role": "assistant",
+                "content": assistant_msg.content or "",
+                "tool_calls": [
+                    {"id": tc.id, "type": "function",
+                     "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                    for tc in (assistant_msg.tool_calls or [])
+                ],
+            })
 
-        # Extract final chat content response bubble string 
-        final_reply = ""
-        for block in response.content:
-            if block.type == "text":
-                final_reply += block.text
+            for tool_call in (assistant_msg.tool_calls or []):
+                tool_name = tool_call.function.name
+                tool_args = json.loads(tool_call.function.arguments)
+
+                # Tool routing execution matrix
+                if tool_name == "search_racquets":
+                    result_data = search_racquets(**tool_args)
+                elif tool_name == "book_fitting":
+                    result_data = handle_book_fitting(tool_args, user_msg)
+                else:
+                    result_data = {"error": "Tool requested not found"}
+
+                # Each result goes back as its own role="tool" message,
+                # matched to the request by tool_call_id.
+                history.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(result_data, ensure_ascii=False),
+                })
+
+            response = call_model()
+
+        # Extract final chat content response bubble string
+        final_reply = response.choices[0].message.content or ""
 
         history.append({"role": "assistant", "content": final_reply})
         return jsonify({"reply": final_reply})
@@ -346,8 +358,8 @@ def chat():
     except Exception as e:
         print(f"Server Engine Core Intercept error: {str(e)}")
         # If it's a billing/credit limit, parse out nicely
-        if "credit" in str(e).lower() or "balance" in str(e).lower():
-            return jsonify({"reply": "（系統提示：你嘅 Anthropic API 帳戶餘額不足，請到 Console 增值，或者用 Pro Account 帳戶仿真功能進行測試。）"})
+        if "credit" in str(e).lower() or "balance" in str(e).lower() or "insufficient" in str(e).lower():
+            return jsonify({"reply": "（系統提示：你嘅 DeepSeek API 帳戶額度不足，請到 Console 充值後重試。）"})
         return jsonify({"reply": "對唔住呀，我而家處理唔到，不如等多陣再試過？"})
 
 if __name__ == "__main__":

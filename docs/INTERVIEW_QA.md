@@ -70,7 +70,7 @@ If you can hang every answer off that sentence, you sound foundational instead o
 
 | Concept | Plain explanation | Tied to foundation / my repo |
 |---|---|---|
-| **Agent** | Model + tools + an orchestration loop pursuing a goal: reason → act → observe → repeat. | The loop compensates for "no hands." Mine: `while stop_reason == "tool_use"` in `bot.py`. |
+| **Agent** | Model + tools + an orchestration loop pursuing a goal: reason → act → observe → repeat. | The loop compensates for "no hands." Mine: `while finish_reason == "tool_calls"` in `bot.py`. |
 | **Workflow vs agent** | Workflow: *code* decides the next step. Agent: the *model* decides. | My mock mode is the workflow twin of my agent — same conversation, both in one file. |
 | **ReAct** | The pattern of interleaving reasoning with actions and feeding observations back in. | What my hand-rolled loop implements without a framework. |
 | **Hallucination** | The model predicts *plausible* text, not *true* text — fabrication isn't a bug, it's the default behavior without grounding. | Direct consequence of next-token prediction. Why my product facts only enter via `search_racquets`. |
@@ -108,7 +108,7 @@ MCP = agent-to-tools; A2A = agent-to-agents (capability cards + task messages). 
 Elicit the job, not features: show me real conversations; what number defines success; what must never happen; when does a human take over; what data exists. Then cut to one journey with a written out-of-scope list. Risks: hallucination (→ grounding), unauthorized side-effects (→ confirmation gate), prompt injection, PII, cost runaway, latency, upstream outage (→ mock fallback).
 
 ### "Why this agent and this LLM?"
-"Haiku 4.5, pinned. Short bounded conversation with simple tool calls — latency and cost dominate, deep reasoning doesn't. The general answer: pick by running your own eval conversations against candidates, not by leaderboard."
+"DeepSeek V3 (`deepseek-chat`), pinned. Short bounded conversation with simple tool calls — latency and cost dominate, deep reasoning doesn't. Two proof points of judgment: I picked `deepseek-chat` over `deepseek-reasoner` because the reasoner doesn't support function calling and this agent lives on tools; and I *migrated* this codebase from Claude Haiku — only the SDK adapter changed, the guardrails didn't move a line, because they're backend-enforced. The general answer: pick by running your own eval conversations against candidates, not by leaderboard."
 
 ### "Why no RAG?"
 "Ten structured products. A budget is an exact numeric filter, not a similarity score — RAG could retrieve a 'similar' racquet that's out of budget. Triggers to adopt: thousands of SKUs or unstructured content. RAG is a tool choice, not a virtue."
@@ -160,7 +160,7 @@ Elicit the job, not features: show me real conversations; what number defines su
 ## Deployment strategist questions
 
 - **Pick the first use case**: "High frequency, bounded, measurable, error-tolerant, data exists. Fitting bookings tick all five; returns/warranty don't — that's why the PRD is what it is."
-- **Quantify impact before building**: "Their numbers: conversations/week × staff minutes × loaded cost vs agent cost/conversation (fractions of a HK dollar on Haiku). If the napkin math isn't compelling, the pilot won't be."
+- **Quantify impact before building**: "Their numbers: conversations/week × staff minutes × loaded cost vs agent cost/conversation (fractions of a HK cent on DeepSeek V3). If the napkin math isn't compelling, the pilot won't be."
 - **Adoption is low — diagnose**: "Instrument the funnel: saw widget → first message → completed questions → booked. Find the cliff, talk to five users at that step. Usually trust or discoverability, not the model."
 - **Brand risk**: "The agent speaks *as* the store: tone rules and refusal scripts are requirements in the prompt; transcripts reviewed early. My injury-question redirect is brand protection as much as safety."
 - **Hand off and leave**: "Docs at three altitudes, runbook for top failure modes, evals as their regression protection, and a pairing session where *they* change the prompt and watch evals respond. Success is me being unnecessary."

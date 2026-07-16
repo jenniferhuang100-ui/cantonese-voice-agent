@@ -45,22 +45,26 @@ Study guide for talking through this project's agent design. Grounded in the act
 
 ## 3. Model selection
 
-**Decision**: `claude-haiku-4-5-20251001`, pinned as a string literal in `agent/bot.py`, matching `CLAUDE.md`. Right call for this task shape — short bounded conversation, simple tool-calling, latency and cost matter more than deep reasoning.
+**Decision**: `deepseek-chat` (DeepSeek V3), pinned as a string literal in `agent/bot.py`, called through DeepSeek's OpenAI-compatible API. Right call for this task shape — short bounded conversation, simple tool-calling, latency and cost matter more than deep reasoning.
 
-**Remaining gap**: it's still a hardcoded literal, not read from an env var — a model change at deploy time needs a code edit.
+**Two deliberate details worth naming**:
+- `deepseek-chat`, NOT `deepseek-reasoner` — the reasoner (R1) doesn't support function calling, and this agent is built entirely around two tools. Picking the "smarter" model here would have broken the product. Model choice is task-shape analysis, not leaderboard-chasing.
+- **This codebase was migrated from Claude Haiku 4.5 to DeepSeek.** The swap touched only the provider adapter: client init, tool-schema shape (Anthropic `input_schema` → OpenAI `function.parameters`), and message roles (`tool_result` blocks → `role:"tool"` messages). Both guardrails — catalog grounding and the booking confirmation check — survived without changing a line, because they're enforced server-side, not provider-side.
 
-**Say out loud**: "I chose Haiku deliberately for cost/latency on a bounded conversation, not because it's the default. It's still a hardcoded literal though — next step is pulling it from an env var so a model swap doesn't need a code change."
+**Remaining gap**: still a hardcoded literal, not read from an env var — a model change at deploy time needs a code edit.
+
+**Say out loud**: "I've migrated this agent across providers — Anthropic to DeepSeek — and the only code that changed was the SDK adapter. The guardrails didn't move, which is the payoff of enforcing them in my backend instead of trusting any provider's model. And I chose deepseek-chat over deepseek-reasoner deliberately: the reasoner doesn't do function calling, and this agent lives on tools."
 
 ---
 
 ## 4. The agentic loop (ReAct), hand-rolled
 
-**Decision**: `agent/bot.py:chat()`. Raw `while response.stop_reason == "tool_use"` loop against the Anthropic Messages API directly — no framework.
-- Each iteration: append the assistant's tool-use block(s) to `history`, execute the tool(s) locally and synchronously, append `tool_result`, call `messages.create()` again.
+**Decision**: `agent/bot.py:chat()`. Raw `while finish_reason == "tool_calls"` loop against the OpenAI-compatible chat-completions API (DeepSeek) directly — no framework.
+- Each iteration: append the assistant's message with its `tool_calls` to `history`, execute the tool(s) locally and synchronously, append one `role: "tool"` message per call (matched by `tool_call_id`), call `chat.completions.create()` again.
 - `MAX_TOOL_ITERATIONS = 5` acts as a circuit breaker against runaway tool-call loops.
-- On cap-out: the code returns a canned fallback **without appending the dangling `tool_use` block** to history — so the next turn's API call doesn't fail on an unmatched tool_use/tool_result pair. This is the detail that shows you understand the Messages API's structural invariants, not just "loop until done."
+- On cap-out: the code returns a canned fallback **without appending the unanswered `tool_calls` message** to history — so the next turn's API call doesn't fail on a tool call with no matching tool reply. This is the detail that shows you understand the chat API's structural invariants, not just "loop until done."
 
-**Say out loud**: "It's a hand-rolled ReAct loop so I have exact control over what enters history — the iteration cap is a circuit breaker, and when it trips, I specifically avoid leaving an unmatched tool_use block, or the very next turn would fail."
+**Say out loud**: "It's a hand-rolled ReAct loop so I have exact control over what enters history — the iteration cap is a circuit breaker, and when it trips, I specifically avoid leaving an unanswered tool call in history, or the very next turn would fail."
 
 ---
 
@@ -78,7 +82,7 @@ Study guide for talking through this project's agent design. Grounded in the act
 
 ## 6. Memory / state, and why there's no user database
 
-**Decision**: `sessions_history` — an in-process Python dict, keyed by `session_id`, holding the full transcript sent to Anthropic. `mock_sessions` is a second, deliberately isolated dict for the FSM demo path. No database, no persistence. This matches `PRD.md`'s explicit scope cut: "Memory across sessions (each conversation starts fresh)."
+**Decision**: `sessions_history` — an in-process Python dict, keyed by `session_id`, holding the full transcript sent to the LLM. `mock_sessions` is a second, deliberately isolated dict for the FSM demo path. No database, no persistence. This matches `PRD.md`'s explicit scope cut: "Memory across sessions (each conversation starts fresh)."
 
 **Why RAM over a database — the cost argument**: a database (even a small managed Postgres/Redis) is infrastructure that costs money and attention *even when idle* — provisioning, a connection to manage, a schema to migrate, a network round-trip added to every single turn. For a v1 conversation that's a few minutes long and doesn't need to survive a restart, that's pure overhead with no corresponding benefit. An in-process dict is free and faster (no network hop) for exactly this shape of workload. The calculus flips the moment either (a) sessions need to survive a redeploy/crash, or (b) this runs on more than one worker/instance — at that point RAM stops working *at all* (see failure modes below), not just becomes suboptimal, and a database stops being optional.
 
@@ -103,13 +107,13 @@ This split — cheap/idempotent tools the model can call at will vs. one dangero
 
 **Tradeoff in `search_racquets`'s graceful degradation**: relaxing filters means a "beginner" search can silently return advanced racquets if nothing matches beginner + style. Optimizes for "always have something to say" over "only return what was literally asked for" — a defensible v1 choice, but worth naming as a choice.
 
-**Tool calling logic, concretely**: both tools are declared in `TOOLS_SCHEMA` (`bot.py`) as Anthropic tool-use schemas (name, description, JSON-schema `input_schema`). The model decides when to call them based on the system prompt's instructions and the conversation so far — the code never forces a call. When the model emits a `tool_use` block, `bot.py`'s loop reads `block.name`/`block.input`, dispatches to the matching Python function (`search_racquets(**tool_args)` or `handle_book_fitting(tool_args, user_msg)`), and feeds the JSON result back as a `tool_result` block so the model can use it to write its next reply. `search_racquets` is imported from `agent/tools/catalog.py` and `book_fitting` from `agent/tools/booking.py` — one implementation, no inline duplicates in `bot.py`.
+**Tool calling logic, concretely**: both tools are declared in `TOOLS_SCHEMA` (`bot.py`) in OpenAI function-calling format (`type: "function"` with name, description, JSON-schema `parameters`). The model decides when to call them based on the system prompt's instructions and the conversation so far — the code never forces a call. When the model returns `tool_calls`, `bot.py`'s loop reads each call's `function.name`/`function.arguments`, dispatches to the matching Python function (`search_racquets(**tool_args)` or `handle_book_fitting(tool_args, user_msg)`), and feeds the JSON result back as a `role: "tool"` message so the model can use it to write its next reply. `search_racquets` is imported from `agent/tools/catalog.py` and `book_fitting` from `agent/tools/booking.py` — one implementation, no inline duplicates in `bot.py`.
 
 ---
 
 ## 8. Orchestration: why no framework
 
-**Decision**: raw `anthropic` Python SDK (`client.messages.create`), no LangChain/LlamaIndex/agent framework.
+**Decision**: raw `openai` Python SDK pointed at DeepSeek's endpoint (`client.chat.completions.create`), no LangChain/LlamaIndex/agent framework.
 
 **Tradeoff**: full visibility and control over exactly what gets appended to history and when — which is what makes the iteration cap and the confirmation guardrail possible to implement precisely — at the cost of hand-implementing things a framework gives for free: retries/backoff, streaming, structured tracing, automatic context trimming.
 
@@ -172,7 +176,7 @@ Pull directly from `ARCHITECTURE.md §10`, in priority order — this already re
 | "Why not use LangChain / an agent framework?" | Two tools, bounded conversation — hand-rolling gives exact control over history and the confirmation guardrail; would reconsider if scope grows. |
 | "What's your eval story — how do you know a prompt change didn't break something?" | Today: manual. `CLAUDE.md` already points at `agent/eval/conversations/` as the intended location; it doesn't exist yet — that's the next concrete step. |
 | "The website shows a racquet — does the agent actually recommend that exact one?" | Yes — the grid fetches the backend's `/catalog` endpoint, which serves the same `racquets.json` the agent's `search_racquets` reads. One catalog, no second copy. |
-| "What's your actual model?" | `bot.py` pins `claude-haiku-4-5-20251001`, matching `CLAUDE.md`. Still a hardcoded literal, not env-configurable yet. |
+| "What's your actual model?" | `bot.py` pins `deepseek-chat` (V3) — deliberately not `deepseek-reasoner`, which doesn't support function calling. Migrated from Claude Haiku 4.5; only the SDK adapter changed, guardrails untouched. Still a hardcoded literal, not env-configurable yet. |
 | "How would this scale past one user at a time?" | It wouldn't yet — single process, in-memory sessions, no rate limiting, non-concurrency-safe CSV writes. That's the honest v1 boundary. See §11 for exactly what changes first. |
 
 ---
