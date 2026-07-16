@@ -131,11 +131,15 @@ This split — cheap/idempotent tools the model can call at will vs. one dangero
 
 ## 10. Evals and success metrics
 
-**Today's metrics** are `PRD.md`'s success criteria: recommendations only from `racquets.json`, confirmation always before booking, natural colloquial Cantonese, voice works on Chrome zh-HK, works on a public URL. All currently verified manually/by inspection, not by an automated eval suite.
+**Built and passing** (`agent/eval/`, run `python agent/eval/run_evals.py [--live]`). Two layers:
+- **Deterministic (free, the CI gate)**: unit checks on `is_explicit_confirmation` (10 accepts / 10 rejects, including the strict "no problem" rejection), `handle_book_fitting` (missing fields and non-confirmations blocked, CSV untouched), `search_racquets` (exact filter results, relaxation behavior, catalog integrity) — plus three golden conversations replayed against the mock FSM.
+- **Live (`--live`, the pre-release smoke test)**: the same golden conversations against real DeepSeek through the full `/chat` route — happy path (booking written only after 係呀), **declined path (model holds all three fields, customer says 唔係 at read-back → zero rows written)**, and the injury-question refusal.
 
-**Gap**: `CLAUDE.md` references `agent/eval/conversations/` as the location of test conversations — **this directory does not exist in the repo**. This is a real, nameable next step, not a hidden flaw — say so directly.
+**Latest run**: 2026-07-17, 79/79 passed. Booking writes are redirected to a throwaway CSV during evals.
 
-**Say out loud**: "Success criteria exist and are precise, but they're not automated yet — the next concrete step is a small eval harness of recorded conversations that assert catalog-only recommendations and confirmation-gated bookings, which CLAUDE.md already points at a path for."
+**Honest limits, say them unprompted if asked to go deep**: the "no invented products" check is a proxy (quoted prices must exist in the catalog + catalog-model-name counting); no LLM-as-judge yet for tone/length; the live layer is non-deterministic so it's a smoke test, not the CI gate.
+
+**Say out loud**: "The two hard rules — catalog-only recommendations and confirmation-gated bookings — are asserted automatically now, in a deterministic layer that's free to run on every change and a live layer that replays the same golden conversations against the real model. The declined-booking fixture is the one I'd show first: the model has everything it needs to book, the customer says no, and the write never happens."
 
 ---
 
@@ -174,7 +178,7 @@ Pull directly from `ARCHITECTURE.md §10`, in priority order — this already re
 | "How do you know the model isn't hallucinating a booking confirmation?" | It doesn't matter what the model believes — `is_explicit_confirmation()` re-checks the customer's literal last message server-side before any write. |
 | "How would you control context growth in a long conversation?" | Summarize, not truncate — once history crosses a threshold, collapse older turns into a short summary of the filled slots (budget/level/style/name/phone) and keep the last 2–3 raw turns verbatim, so truncation can't silently drop a slot the model then re-asks. Not built yet — named next step. |
 | "Why not use LangChain / an agent framework?" | Two tools, bounded conversation — hand-rolling gives exact control over history and the confirmation guardrail; would reconsider if scope grows. |
-| "What's your eval story — how do you know a prompt change didn't break something?" | Today: manual. `CLAUDE.md` already points at `agent/eval/conversations/` as the intended location; it doesn't exist yet — that's the next concrete step. |
+| "What's your eval story — how do you know a prompt change didn't break something?" | `python agent/eval/run_evals.py` — deterministic guardrail/catalog units plus golden conversations vs the mock FSM, free on every change; `--live` replays the same conversations against real DeepSeek. Latest: 79/79. Gap left: LLM-as-judge for tone, and CI wiring. |
 | "The website shows a racquet — does the agent actually recommend that exact one?" | Yes — the grid fetches the backend's `/catalog` endpoint, which serves the same `racquets.json` the agent's `search_racquets` reads. One catalog, no second copy. |
 | "What's your actual model?" | `bot.py` pins `deepseek-chat` (V3) — deliberately not `deepseek-reasoner`, which doesn't support function calling. Migrated from Claude Haiku 4.5; only the SDK adapter changed, guardrails untouched. Still a hardcoded literal, not env-configurable yet. |
 | "How would this scale past one user at a time?" | It wouldn't yet — single process, in-memory sessions, no rate limiting, non-concurrency-safe CSV writes. That's the honest v1 boundary. See §11 for exactly what changes first. |

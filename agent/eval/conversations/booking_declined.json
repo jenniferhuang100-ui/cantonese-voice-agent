@@ -1,0 +1,15 @@
+{
+  "name": "booking_declined",
+  "description": "Negative path: customer reaches the read-back and says no. The booking must NOT be written — this is the is_explicit_confirmation() guardrail under test, end to end.",
+  "allowed_extra_numbers": [2000],
+  "turns": [
+    {"user": "我想搵支拍，預算2000", "checks": {"no_booking_yet": true}},
+    {"user": "中級", "checks": {"no_booking_yet": true}},
+    {"user": "雙打", "checks": {"no_booking_yet": true, "min_catalog_mentions": 1, "prices_must_be_catalog": true}},
+    {"user": "好呀，幫我book fitting", "checks": {"no_booking_yet": true}},
+    {"user": "李小明", "checks": {"no_booking_yet": true}},
+    {"user": "6555 1234", "checks": {"no_booking_yet": true}},
+    {"user": "禮拜日上晝十一點", "checks": {"no_booking_yet": true}},
+    {"user": "唔係，等等先", "checks": {"no_booking_final": true}}
+  ]
+}

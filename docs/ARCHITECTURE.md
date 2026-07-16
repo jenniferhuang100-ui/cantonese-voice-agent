@@ -119,11 +119,10 @@ This is a reasonable, deliberate tradeoff for a v1 demo (matches the PRD's expli
 
 These are concrete, verifiable issues in the current tree, not style opinions:
 
-1. **`CLAUDE.md` references `agent/eval/conversations/`** as the location of test conversations; this directory does not exist in the repository yet.
-2. **CORS is fully open** (`CORS(app)` with no origin restriction) and there is no rate limiting or auth on `/chat` — acceptable for a local/demo deployment, a gap before this fronts a real store with a public URL (someone could script requests directly against the Railway endpoint and run up API costs, or spam `bookings.csv`).
-3. **CSV writes are not concurrency-safe.** `book_fitting()` opens, appends, and closes the file per call with no locking; fine under Flask's single-threaded dev server, a latent race if this is ever run with multiple workers/threads.
+1. **CORS is fully open** (`CORS(app)` with no origin restriction) and there is no rate limiting or auth on `/chat` — acceptable for a local/demo deployment, a gap before this fronts a real store with a public URL (someone could script requests directly against the Railway endpoint and run up API costs, or spam `bookings.csv`).
+2. **CSV writes are not concurrency-safe.** `book_fitting()` opens, appends, and closes the file per call with no locking; fine under Flask's single-threaded dev server, a latent race if this is ever run with multiple workers/threads.
 
-(Resolved since the last review: the second hardcoded catalog copy in `web/index.html` is gone — the grid now fetches `/catalog`, which serves `racquets.json` directly, and the Cantonese display copy moved into `racquets.json` as `tagline_zh`.)
+(Resolved since the last review: the second hardcoded catalog copy in `web/index.html` is gone — the grid now fetches `/catalog`, which serves `racquets.json` directly, with the Cantonese display copy in `racquets.json` as `tagline_zh`. And `agent/eval/` now exists: a two-layer eval suite — deterministic guardrail/catalog units + golden conversations vs the mock FSM, plus a `--live` layer replaying the same conversations against real DeepSeek. See `agent/eval/README.md`.)
 
 ## 10. Where to improve, roughly in priority order
 
@@ -135,4 +134,4 @@ These are concrete, verifiable issues in the current tree, not style opinions:
 6. **Structured logging around tool calls** (tool name, args, latency, result size) — currently a bad recommendation or a missed booking is a "reproduce it locally" problem, not a "read the log" problem.
 7. **Decide the mock-mode maintenance story.** Either generate `MOCK_PROMPTS`/state transitions from `system_prompt.md` at load time so the two can't drift, or accept the duplication explicitly and add a comment/test that fails when the real prompt's question order changes without a corresponding mock update.
 8. **Basic abuse protection before any public marketing push**: rate-limit `/chat`, and consider restricting CORS to the actual storefront origin instead of `*`.
-9. **Create the `agent/eval/conversations/` fixtures** `CLAUDE.md` already references, or update `CLAUDE.md` to stop pointing at a path that doesn't exist.
+9. ~~**Create the `agent/eval/conversations/` fixtures**~~ ✅ Done — `agent/eval/run_evals.py` + three golden-conversation fixtures; deterministic layer (guardrail/catalog units + mock replay) and a `--live` DeepSeek layer. Latest run: 79/79. Next eval step when needed: LLM-as-judge for tone/length, and wiring the deterministic layer into CI.

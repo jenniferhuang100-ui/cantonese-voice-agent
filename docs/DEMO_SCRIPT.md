@@ -119,4 +119,4 @@ Same conversation script above still works — `mock_reply()` in `agent/bot.py` 
 - **Tool-calling logic** → `WALKTHROUGH_PREP.md` §7, this doc's file map above.
 - **Hallucination control + context/summarization strategy** → `WALKTHROUGH_PREP.md` §5, `ARCHITECTURE.md` §6a.
 - **Scaling** → `WALKTHROUGH_PREP.md` §11 (current limits) and §12 (roadmap, in priority order).
-- **Evals** → `WALKTHROUGH_PREP.md` §10: none automated yet, `agent/eval/conversations/` is the named next step, not built. Say this directly if asked — it's a real gap, not a hidden one.
+- **Evals** → `WALKTHROUGH_PREP.md` §10 and `agent/eval/README.md`: built and passing (79/79 incl. live DeepSeek). Live demo-able: `python agent/eval/run_evals.py` runs free in seconds; `--live` replays the golden conversations against the real model. Lead with the declined-booking fixture — the guardrail holding against the real LLM. |

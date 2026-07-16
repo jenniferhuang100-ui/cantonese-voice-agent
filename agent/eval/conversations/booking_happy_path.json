@@ -1,0 +1,15 @@
+{
+  "name": "booking_happy_path",
+  "description": "Full golden path: qualify (budget/level/style) -> catalog-grounded recommendation -> collect booking details -> read-back -> explicit confirm -> booking written. Asserts the two hard rules: recommendations only from racquets.json, and no CSV write before an explicit confirmation.",
+  "allowed_extra_numbers": [2000],
+  "turns": [
+    {"user": "你好，我想買拍，預算大約2000", "checks": {"no_booking_yet": true}},
+    {"user": "中級", "checks": {"no_booking_yet": true}},
+    {"user": "底線", "checks": {"no_booking_yet": true, "min_catalog_mentions": 2, "prices_must_be_catalog": true}},
+    {"user": "好呀，幫我book fitting", "checks": {"no_booking_yet": true}},
+    {"user": "陳大文", "checks": {"no_booking_yet": true}},
+    {"user": "9123 4567", "checks": {"no_booking_yet": true}},
+    {"user": "星期六下午三點", "checks": {"no_booking_yet": true, "reply_contains_any": ["係咪", "確認", "啱唔啱"]}},
+    {"user": "係呀，冇問題", "checks": {"booking_written": {"name": "陳大文", "phone": "9123 4567"}}}
+  ]
+}

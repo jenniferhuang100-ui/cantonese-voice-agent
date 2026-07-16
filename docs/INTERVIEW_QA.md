@@ -13,7 +13,7 @@ Every strong answer has four beats. Use it reflexively:
 
 > **Decision → Why (tied to a foundation) → Trigger that would change it → Honest gap**
 
-Example: "No RAG *(decision)* — my catalog is 10 structured items, and exact numeric filters beat similarity search for price/stock *(why, tied to how retrieval actually works)*. I'd add it when the corpus becomes large or unstructured — thousands of SKUs, reviews, guides *(trigger)*. Not built yet, and my evals aren't automated either *(gap)*."
+Example: "No RAG *(decision)* — my catalog is 10 structured items, and exact numeric filters beat similarity search for price/stock *(why, tied to how retrieval actually works)*. I'd add it when the corpus becomes large or unstructured — thousands of SKUs, reviews, guides *(trigger)*. Not built yet, and my evals don't yet judge fuzzy qualities like tone — only the hard rules *(gap)*."
 
 This shape is what "engineering judgment" sounds like. Naming the trigger proves you understand the concept deeply enough to know its boundary; naming the gap proves honesty. Never answer with just the decision.
 
@@ -88,7 +88,7 @@ If you can hang every answer off that sentence, you sound foundational instead o
 | **Prompt caching** | Provider caches the stable prompt prefix (system prompt, tool schemas) so repeat calls are cheaper/faster. | Mine is static per conversation — near-free win at volume. |
 | **Streaming** | Render tokens as they generate; UX fix for latency, changes nothing about quality. | Named gap in my repo — client waits for the full tool loop. |
 | **Temperature** | Randomness dial on token sampling. Low for tool-calling agents — you want reproducibility, not creativity. | |
-| **Evals** | Golden conversations asserted automatically (catalog-only recommendations, gated bookings); LLM-as-judge for fuzzy qualities like tone. The regression net that makes prompt changes safe. | `CLAUDE.md` already points at `agent/eval/conversations/` — my named next step. |
+| **Evals** | Golden conversations asserted automatically (catalog-only recommendations, gated bookings); LLM-as-judge for fuzzy qualities like tone. The regression net that makes prompt changes safe. | Built: `agent/eval/run_evals.py` — deterministic layer (free, every change) + `--live` DeepSeek layer. Latest: 79/79. LLM-as-judge is the remaining layer. |
 | **Shadow mode** | Agent runs silently alongside humans to measure quality risk-free before real rollout. | Step one of any rollout of a side-effecting agent. |
 
 ---
@@ -136,7 +136,7 @@ Elicit the job, not features: show me real conversations; what number defines su
 
 - **Workflow vs agent line?** "Who owns control flow. I have both in one file — the LLM loop and the mock FSM are the same conversation."
 - **Is yours actually autonomous?** "Bounded autonomy — the model picks tools; side-effects pass a gate it can't talk past. Autonomy is a dial set per-action by risk."
-- **How would you know it's gone bad in production?** "Today: manually — named gap. Right answer: tool-call logs, blocked-booking rate, transcript sampling, evals on every change."
+- **How would you know it's gone bad in production?** "Pre-release, my eval suite: deterministic guardrail checks + golden conversations free on every change, `--live` replays them against real DeepSeek (79/79 today). In production, the remaining gap is observability — tool-call logs, blocked-booking rate, transcript sampling. Evals catch regressions you anticipated; logs catch the ones you didn't."
 - **What breaks first going multi-agent too early?** "Latency (extra LLM call per hop), then state sync, then debuggability. Agents should exchange explicit task messages, not share raw memory."
 - **When switch models / fine-tune?** "Switch on eval regression or real capability/cost triggers — pinned version + evals makes swaps safe. No fine-tuning: the ladder is prompting → RAG → fine-tuning; climb when the cheaper rung fails."
 - **How would you add RAG concretely?** "As another *tool*: embeddings over reviews/guides, semantic search alongside — not replacing — structured filters. Failure modes: retrieval misses, stale index, bad chunking, indirect injection via retrieved docs."
