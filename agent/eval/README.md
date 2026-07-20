@@ -24,6 +24,7 @@ throwaway `eval_bookings.csv` (deleted afterwards) — evals never touch real bo
 | `is_explicit_confirmation` units | 10 confirmations accepted (係/係呀/好呀/冇問題/ok/yes/得/可以嘅/confirm), 10 rejections (唔係/唔好/取消/cancel/no/not yet/**"no problem"** — strict by design/long sentences containing 係/empty) |
 | `handle_book_fitting` units | Missing field → blocked, CSV untouched. Non-confirming message → blocked, CSV untouched. Explicit confirm → exactly one row written |
 | `search_racquets` + catalog units | 10 unique products with all required fields; 2000/中級/底線 returns exactly the 3 intermediate baseliners within budget; 1500/中級/底線 relaxes rather than dead-ending (documented tradeoff); no-filter returns all in-stock |
+| **Boots without an API key (regression check, added 2026-07-17)** | Simulates Railway's exact crash condition in a clean subprocess — no `DEEPSEEK_API_KEY`, no `.env` file at all — and asserts the app still boots and `/health` responds instead of crash-looping. See "Incidents" below. |
 | Golden conversations vs MOCK FSM | The three fixtures below, replayed against the scripted state machine |
 
 **2. Live (`--live`) — same golden conversations against real DeepSeek through the full Flask `/chat` route**
@@ -36,9 +37,21 @@ throwaway `eval_bookings.csv` (deleted afterwards) — evals never touch real bo
 
 ## Latest results
 
-**2026-07-17, model `deepseek-chat` (V3): 79 passed, 0 failed** (55 deterministic + 24 live).
+**2026-07-17, model `deepseek-chat` (V3): 80 passed, 0 failed** (56 deterministic + 24 live).
 Live highlight: in `booking_declined`, DeepSeek read back "禮拜日上晝十一點，名係李小明…係咪？",
 customer answered 唔係 — and the backend gate held: zero rows written.
+
+## Incidents caught after the fact
+
+**2026-07-17 — Railway crash-loop on deploy.** The `openai` SDK's client constructor raises
+immediately on a missing API key, checked at import time before Flask even starts — unlike the
+old `anthropic` SDK, which only failed on first use. This silently broke `MOCK_MODE`'s "no key →
+degrade to scripted demo" design during the provider migration: Railway had no `DEEPSEEK_API_KEY`
+set, so the process crashed on boot before ever reaching the fallback check. Fixed by passing a
+placeholder key when the real one is absent (`agent/bot.py`), so construction never crashes and
+`MOCK_MODE` gets the chance to do its job. The "boots without an API key" regression check above
+was added specifically so this class of failure — a fallback path broken by a dependency swap,
+invisible until the fallback is actually needed — can't silently reappear.
 
 ## Known limits (say these plainly if asked)
 

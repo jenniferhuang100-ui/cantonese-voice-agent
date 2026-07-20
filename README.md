@@ -47,7 +47,9 @@ python agent/bot.py         # starts Flask on http://localhost:5000
 
 ## Deployment
 
-Configured for Railway (`railway.json`, `Procfile.txt`) — set `DEEPSEEK_API_KEY` as an environment variable on the host. `bot.py` binds to the host-injected `PORT` env var (defaults to 5000 locally). The frontend's API base URL is computed once in `web/index.html` (`window.API_BASE`): localhost when served locally, the deployed Railway URL otherwise.
+Configured for Railway (`railway.json`, `Procfile.txt`) — set `DEEPSEEK_API_KEY` as an environment variable on the host (Railway dashboard → your service → **Variables** tab → **New Variable** → name `DEEPSEEK_API_KEY`, paste the key → the service redeploys automatically). `bot.py` binds to the host-injected `PORT` env var (defaults to 5000 locally). The frontend's API base URL is computed once in `web/index.html` (`window.API_BASE`): localhost when served locally, the deployed Railway URL otherwise.
+
+**If the deployed app crash-loops**, check the Railway service's **Deployments → Logs** first. A missing `DEEPSEEK_API_KEY` variable is the most likely cause — without it, the app now falls back to `MOCK_MODE` rather than crashing (fixed 2026-07-17; see `docs/ARCHITECTURE.md` §9), but real DeepSeek replies require the variable to actually be set on the host, not just in your local `.env` (which never leaves your machine — Railway reads its own dashboard-configured variables only).
 
 ## Hard rules (see `CLAUDE.md` for the full list)
 

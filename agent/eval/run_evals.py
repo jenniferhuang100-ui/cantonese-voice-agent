@@ -25,6 +25,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 import uuid
 
@@ -108,6 +109,52 @@ def unit_booking_handler():
           r.get("status") == "success" and len(rows) == 1 and rows[0][0] == "測試客",
           f"result={r}, rows={rows}")
     reset_eval_csv()
+
+
+def unit_boots_without_api_key():
+    """Regression check for the 2026-07-17 Railway crash-loop: the openai SDK's
+    client constructor raises immediately on a missing key (import time, before
+    Flask starts), unlike the old anthropic SDK which only failed on first use.
+    That silently broke MOCK_MODE's 'no key -> scripted fallback' design during
+    the DeepSeek migration. This simulates Railway's exact condition (no
+    DEEPSEEK_API_KEY, no .env file at all) in a clean subprocess and asserts
+    the app still boots and serves /health instead of crash-looping.
+    """
+    print("\n== Regression: app boots cleanly with zero API key present ==")
+    repo_root = os.path.dirname(AGENT_DIR)
+    env_path = os.path.join(repo_root, ".env")
+    env_backup = env_path + ".eval_backup"
+    moved = False
+    try:
+        if os.path.exists(env_path):
+            os.rename(env_path, env_backup)
+            moved = True
+
+        # Inherit the real environment (Windows needs APPDATA/USERPROFILE/etc.
+        # to even resolve installed packages) and strip only the keys under
+        # test, rather than a minimal env that breaks package resolution for
+        # unrelated reasons.
+        clean_env = {k: v for k, v in os.environ.items()
+                     if k.upper() not in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "MOCK")}
+        script = (
+            "import sys; sys.path.insert(0, 'agent'); import bot; "
+            "c = bot.app.test_client(); r = c.get('/health'); "
+            "assert r.status_code == 200, r.status_code; "
+            "print('BOOT_OK', bot.MOCK_MODE)"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root, env=clean_env,
+            capture_output=True, text=True, timeout=30,
+        )
+        check(
+            "app boots and /health responds with no DEEPSEEK_API_KEY / no .env",
+            result.returncode == 0 and "BOOT_OK True" in result.stdout,
+            (result.stderr or result.stdout)[-300:],
+        )
+    finally:
+        if moved:
+            os.rename(env_backup, env_path)
 
 
 def unit_catalog_tool():
@@ -199,6 +246,7 @@ def main():
     try:
         unit_confirmation_guardrail()
         unit_booking_handler()
+        unit_boots_without_api_key()
         unit_catalog_tool()
 
         for fx in fixtures:

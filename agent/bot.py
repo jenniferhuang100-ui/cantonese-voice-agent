@@ -35,8 +35,17 @@ CORS(app)  # Crucial: This permits your index.html file to call the backend!
 # deepseek-chat (V3), NOT deepseek-reasoner: the reasoner doesn't support
 # function calling, and this agent is built around two tools.
 MODEL = "deepseek-chat"
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+
+# Unlike the old Anthropic SDK, OpenAI's client constructor raises immediately
+# if api_key is None/empty (checked at import time, before Flask even starts)
+# instead of only failing when actually called. A placeholder keeps
+# construction crash-free so a missing key falls through to MOCK_MODE below,
+# as designed, rather than taking the whole process down before it can serve
+# a single request (this is exactly what happened when DEEPSEEK_API_KEY was
+# unset on Railway: crash-loop on boot, never reaching the mock fallback).
 client = OpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    api_key=DEEPSEEK_API_KEY or "unset-falls-back-to-mock-mode",
     base_url="https://api.deepseek.com",
     timeout=30.0,
 )
@@ -45,7 +54,7 @@ client = OpenAI(
 # real key is present (for rehearsing without burning API credits); with no
 # override, an empty/missing key falls back to the same scripted path
 # automatically so the demo still runs with no DeepSeek account at all.
-MOCK_MODE = os.getenv("MOCK", "0") == "1" or not os.getenv("DEEPSEEK_API_KEY")
+MOCK_MODE = os.getenv("MOCK", "0") == "1" or not DEEPSEEK_API_KEY
 
 MAX_TOOL_ITERATIONS = 5
 
